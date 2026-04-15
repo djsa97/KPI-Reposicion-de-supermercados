@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+# Local credentials
+automatizacion-sol-huevos-2-f02d718cb7d4.json
+*.json.local
+.env
+.env.*
+!.env.example
+
+# Local PDFs and extracted data
+data/*.pdf
+data/*.csv
+data/*.xlsx
+
+# Streamlit/local config
+.streamlit/secrets.toml
