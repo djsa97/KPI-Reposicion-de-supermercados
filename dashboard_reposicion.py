@@ -162,7 +162,13 @@ ALIASES_SUCURSALES = {
 
 @st.cache_resource
 def get_client():
-    creds = Credentials.from_service_account_file(CREDS_FILE, scopes=SCOPES)
+    if "gcp_service_account" in st.secrets:
+        creds = Credentials.from_service_account_info(
+            dict(st.secrets["gcp_service_account"]),
+            scopes=SCOPES,
+        )
+    else:
+        creds = Credentials.from_service_account_file(CREDS_FILE, scopes=SCOPES)
     return gspread.authorize(creds)
 
 
