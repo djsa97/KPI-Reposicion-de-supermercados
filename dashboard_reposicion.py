@@ -15,8 +15,10 @@ CREDS_FILE = os.getenv(
     os.path.join(BASE_DIR, "automatizacion-sol-huevos-2-f02d718cb7d4.json"),
 )
 WORKSHEET_NAME = "reposicion_base"
-MESES_BASE = 3
+MESES_BASE = 5
 CLIENTES_EXCLUIDOS = set()
+COL_PROM_UND = "Prom. períodos"
+COL_PROM_MONTO = "Prom. períodos monto"
 
 SUCURSALES_VALIDAS = {
     "ALIMENTOS ESPECIALES S.A.": ["ESPANA", "LAURELES", "MOLAS", "OTROS", "PERSERVERANCIA"],
@@ -311,6 +313,8 @@ def label_mes(df: pd.DataFrame, slot: int) -> str:
 
 
 def semanas_del_mes(label: str) -> float:
+    if label.startswith(("S1 ", "S2 ", "S3 ", "S4 ")):
+        return 1.0
     if label.startswith(("ENE", "MAR", "MAY", "JUL", "AGO", "OCT", "DIC")):
         return 31 / 7
     if label.startswith(("ABR", "JUN", "SEP", "NOV")):
@@ -364,8 +368,8 @@ def build_producto_resumen(df: pd.DataFrame) -> pd.DataFrame:
         vista[col] = serie
         columnas_prom.append(col)
 
-    vista["Prom. 3 meses"] = vista[columnas_prom].mean(axis=1).round(0).astype(int) if columnas_prom else 0
-    return vista.sort_values(["Prom. 3 meses", "Producto"], ascending=[False, True])
+    vista[COL_PROM_UND] = vista[columnas_prom].mean(axis=1).round(0).astype(int) if columnas_prom else 0
+    return vista.sort_values([COL_PROM_UND, "Producto"], ascending=[False, True])
 
 
 def build_tabla_principal(df: pd.DataFrame) -> pd.DataFrame:
@@ -378,7 +382,7 @@ def build_tabla_principal(df: pd.DataFrame) -> pd.DataFrame:
         vista[col] = valor_promedio_semanal(df, label)
         columnas_prom.append(col)
 
-    vista["Prom. 3 meses"] = vista[columnas_prom].mean(axis=1).round(0).astype(int) if columnas_prom else 0
+    vista[COL_PROM_UND] = vista[columnas_prom].mean(axis=1).round(0).astype(int) if columnas_prom else 0
     return vista
 
 
@@ -396,7 +400,7 @@ def build_tabla_principal_montos(df: pd.DataFrame) -> pd.DataFrame:
         vista[col_destino] = df[f"MES_{slot}_NETO_MONTO"].round(0).astype(int)
         columnas_monto.append(col_destino)
 
-    vista["Prom. 3 meses monto"] = vista[columnas_monto].mean(axis=1).round(0).astype(int) if columnas_monto else 0
+    vista[COL_PROM_MONTO] = vista[columnas_monto].mean(axis=1).round(0).astype(int) if columnas_monto else 0
     vista["Total meses actuales monto"] = vista[columnas_monto].sum(axis=1).round(0).astype(int) if columnas_monto else 0
     return vista
 
@@ -407,7 +411,7 @@ def build_tabla_supermercado_montos(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=["CLIENTE"])
 
     columnas_monto = [c for c in tabla.columns if c.startswith("Monto neto ")]
-    columnas_sumar = columnas_monto + ["Prom. 3 meses monto", "Total meses actuales monto"]
+    columnas_sumar = columnas_monto + [COL_PROM_MONTO, "Total meses actuales monto"]
 
     return (
         tabla.groupby("CLIENTE", as_index=False)[columnas_sumar]
@@ -418,7 +422,7 @@ def build_tabla_supermercado_montos(df: pd.DataFrame) -> pd.DataFrame:
 
 def style_detalle(df: pd.DataFrame, referencia_producto_detalle: dict[str, float]):
     cols_meses = [c for c in df.columns if c.startswith("Prom. semanal neto ")]
-    cols_objetivo = cols_meses + ["Prom. 3 meses"]
+    cols_objetivo = cols_meses + [COL_PROM_UND]
 
     def style_row(row):
         producto = str(row.get("Producto", "")).strip()
@@ -508,12 +512,12 @@ def construir_tendencia_productos_monto(df: pd.DataFrame) -> pd.DataFrame:
 def construir_ranking_sucursales(df: pd.DataFrame) -> pd.DataFrame:
     tabla = build_tabla_principal(df)
     if tabla.empty:
-        return pd.DataFrame(columns=["Etiqueta", "Prom. 3 meses"])
+        return pd.DataFrame(columns=["Etiqueta", COL_PROM_UND])
 
     ranking = (
-        tabla.groupby(["CLIENTE", "Sucursal"], as_index=False)["Prom. 3 meses"]
+        tabla.groupby(["CLIENTE", "Sucursal"], as_index=False)[COL_PROM_UND]
         .sum()
-        .sort_values("Prom. 3 meses", ascending=False)
+        .sort_values(COL_PROM_UND, ascending=False)
         .head(15)
     )
     ranking["Etiqueta"] = ranking["CLIENTE"] + " | " + ranking["Sucursal"]
@@ -564,9 +568,9 @@ def construir_evolucion_supermercados_producto(df: pd.DataFrame, producto: str) 
         return pd.DataFrame(columns=["CLIENTE", "Mes", "Promedio"])
 
     top_clientes = (
-        base.groupby("CLIENTE", as_index=False)["Prom. 3 meses"]
+        base.groupby("CLIENTE", as_index=False)[COL_PROM_UND]
         .sum()
-        .sort_values("Prom. 3 meses", ascending=False)
+        .sort_values(COL_PROM_UND, ascending=False)
         .head(8)["CLIENTE"]
         .tolist()
     )
@@ -596,9 +600,9 @@ def construir_evolucion_supermercados_producto_monto(df: pd.DataFrame, producto:
         return pd.DataFrame(columns=["CLIENTE", "Mes", "Monto"])
 
     top_clientes = (
-        base.groupby("CLIENTE", as_index=False)["Prom. 3 meses monto"]
+        base.groupby("CLIENTE", as_index=False)[COL_PROM_MONTO]
         .sum()
-        .sort_values("Prom. 3 meses monto", ascending=False)
+        .sort_values(COL_PROM_MONTO, ascending=False)
         .head(8)["CLIENTE"]
         .tolist()
     )
@@ -621,20 +625,20 @@ def construir_evolucion_supermercados_producto_monto(df: pd.DataFrame, producto:
 def construir_mix_productos_supermercado(df: pd.DataFrame) -> pd.DataFrame:
     tabla = build_tabla_principal(df)
     if tabla.empty:
-        return pd.DataFrame(columns=["CLIENTE", "Producto", "Prom. 3 meses"])
+        return pd.DataFrame(columns=["CLIENTE", "Producto", COL_PROM_UND])
 
     top_clientes = (
-        tabla.groupby("CLIENTE", as_index=False)["Prom. 3 meses"]
+        tabla.groupby("CLIENTE", as_index=False)[COL_PROM_UND]
         .sum()
-        .sort_values("Prom. 3 meses", ascending=False)
+        .sort_values(COL_PROM_UND, ascending=False)
         .head(8)["CLIENTE"]
         .tolist()
     )
 
     top_productos = (
-        tabla.groupby("Producto", as_index=False)["Prom. 3 meses"]
+        tabla.groupby("Producto", as_index=False)[COL_PROM_UND]
         .sum()
-        .sort_values("Prom. 3 meses", ascending=False)
+        .sort_values(COL_PROM_UND, ascending=False)
         .head(6)["Producto"]
         .tolist()
     )
@@ -645,29 +649,29 @@ def construir_mix_productos_supermercado(df: pd.DataFrame) -> pd.DataFrame:
     ].copy()
 
     return (
-        base.groupby(["CLIENTE", "Producto"], as_index=False)["Prom. 3 meses"]
+        base.groupby(["CLIENTE", "Producto"], as_index=False)[COL_PROM_UND]
         .sum()
-        .sort_values(["CLIENTE", "Prom. 3 meses"], ascending=[True, False])
+        .sort_values(["CLIENTE", COL_PROM_UND], ascending=[True, False])
     )
 
 
 def construir_mix_productos_supermercado_monto(df: pd.DataFrame) -> pd.DataFrame:
     tabla = build_tabla_principal_montos(df)
     if tabla.empty:
-        return pd.DataFrame(columns=["CLIENTE", "Producto", "Prom. 3 meses monto"])
+        return pd.DataFrame(columns=["CLIENTE", "Producto", COL_PROM_MONTO])
 
     top_clientes = (
-        tabla.groupby("CLIENTE", as_index=False)["Prom. 3 meses monto"]
+        tabla.groupby("CLIENTE", as_index=False)[COL_PROM_MONTO]
         .sum()
-        .sort_values("Prom. 3 meses monto", ascending=False)
+        .sort_values(COL_PROM_MONTO, ascending=False)
         .head(8)["CLIENTE"]
         .tolist()
     )
 
     top_productos = (
-        tabla.groupby("Producto", as_index=False)["Prom. 3 meses monto"]
+        tabla.groupby("Producto", as_index=False)[COL_PROM_MONTO]
         .sum()
-        .sort_values("Prom. 3 meses monto", ascending=False)
+        .sort_values(COL_PROM_MONTO, ascending=False)
         .head(6)["Producto"]
         .tolist()
     )
@@ -678,9 +682,9 @@ def construir_mix_productos_supermercado_monto(df: pd.DataFrame) -> pd.DataFrame
     ].copy()
 
     return (
-        base.groupby(["CLIENTE", "Producto"], as_index=False)["Prom. 3 meses monto"]
+        base.groupby(["CLIENTE", "Producto"], as_index=False)[COL_PROM_MONTO]
         .sum()
-        .sort_values(["CLIENTE", "Prom. 3 meses monto"], ascending=[True, False])
+        .sort_values(["CLIENTE", COL_PROM_MONTO], ascending=[True, False])
     )
 
 
@@ -824,9 +828,9 @@ if df_filtrado.empty:
     st.stop()
 
 tabla_productos = build_producto_resumen(df_filtrado)
-promedio_general = float(tabla_productos["Prom. 3 meses"].mean()) if not tabla_productos.empty else 0
+promedio_general = float(tabla_productos[COL_PROM_UND].mean()) if not tabla_productos.empty else 0
 referencia_producto = (
-    tabla_productos.set_index("Producto")["Prom. 3 meses"].to_dict()
+    tabla_productos.set_index("Producto")[COL_PROM_UND].to_dict()
     if not tabla_productos.empty else {}
 )
 
@@ -839,7 +843,7 @@ with o1:
         "Cliente": "CLIENTE",
         "Sucursal": "Sucursal",
         "Producto": "Producto",
-        "Prom. 3 meses": "Prom. 3 meses",
+        "Prom. períodos": COL_PROM_UND,
     }
     for label in labels_activos:
         opciones_orden[f"Prom. semanal neto {label}"] = f"Prom. semanal neto {label}"
@@ -855,7 +859,7 @@ with o2:
 
 tabla_principal = build_tabla_principal(df_filtrado)
 referencia_producto_detalle = (
-    tabla_principal.groupby("Producto")["Prom. 3 meses"].mean().to_dict()
+    tabla_principal.groupby("Producto")[COL_PROM_UND].mean().to_dict()
     if not tabla_principal.empty else {}
 )
 col_orden = opciones_orden[ordenar_por]
@@ -929,7 +933,7 @@ with v1:
         index=0 if productos_vis else None,
     )
 with v2:
-    metrica_vis_labels = {"Prom. 3 meses (monto)": "Prom. 3 meses monto"}
+    metrica_vis_labels = {"Prom. períodos (monto)": COL_PROM_MONTO}
     for label in labels_activos:
         metrica_vis_labels[f"Monto neto {label}"] = f"Monto neto {label}"
 
@@ -1050,7 +1054,7 @@ with g6:
         fig_mix = px.bar(
             mix_productos_supermercado,
             x="CLIENTE",
-            y="Prom. 3 meses monto",
+            y=COL_PROM_MONTO,
             color="Producto",
             barmode="stack",
         )
@@ -1058,7 +1062,7 @@ with g6:
             height=440,
             margin=dict(l=20, r=20, t=20, b=20),
             xaxis_title="Supermercado",
-            yaxis_title="Monto neto promedio 3 meses",
+            yaxis_title="Monto neto promedio de períodos",
             legend_title="Producto",
         )
         fig_mix.update_yaxes(tickformat=",.0f")

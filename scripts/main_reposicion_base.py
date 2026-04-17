@@ -1,5 +1,6 @@
 import calendar
 import os
+from datetime import datetime
 
 import pandas as pd
 import gspread
@@ -18,7 +19,7 @@ CREDS_FILE = os.getenv(
 
 SHEET_SOURCE = "movimientos_final"
 SHEET_DEST = "reposicion_base"
-MESES_BASE = 3
+MESES_BASE = 5
 
 
 # =========================
@@ -86,19 +87,49 @@ def etiqueta_periodo(anio: int, mes: int) -> str:
     return f"{MESES_ES.get(mes, str(mes))}-{anio}"
 
 
-def obtener_periodos_base(df: pd.DataFrame):
-    periodos = (
-        df[["AÑO", "MES"]]
-        .dropna()
-        .drop_duplicates()
-        .sort_values(["AÑO", "MES"])
-    )
-
-    if periodos.empty:
+def obtener_slots_base(df: pd.DataFrame):
+    fechas = pd.to_datetime(df["FECHA"], format="%d/%m/%Y", errors="coerce").dropna()
+    if fechas.empty:
         return []
 
-    ultimos = periodos.tail(MESES_BASE).values.tolist()
-    return [(int(anio), int(mes)) for anio, mes in ultimos]
+    anio = int(fechas.max().year)
+    return [
+        {
+            "label": etiqueta_periodo(anio, 1),
+            "kind": "month",
+            "anio": anio,
+            "mes": 1,
+            "days": 31,
+        },
+        {
+            "label": etiqueta_periodo(anio, 2),
+            "kind": "month",
+            "anio": anio,
+            "mes": 2,
+            "days": 28,
+        },
+        {
+            "label": etiqueta_periodo(anio, 3),
+            "kind": "month",
+            "anio": anio,
+            "mes": 3,
+            "days": 31,
+        },
+        {
+            "label": f"S1 ABR-{anio}",
+            "kind": "range",
+            "start": datetime(anio, 4, 1),
+            "end": datetime(anio, 4, 7),
+            "days": 7,
+        },
+        {
+            "label": f"S2 ABR-{anio}",
+            "kind": "range",
+            "start": datetime(anio, 4, 8),
+            "end": datetime(anio, 4, 14),
+            "days": 7,
+        },
+    ]
 
 
 def columnas_finales():
@@ -135,11 +166,21 @@ def columnas_finales():
     return columnas
 
 
-def calcular_semanas_periodo(periodos):
-    dias = 0
-    for anio, mes in periodos:
-        dias += calendar.monthrange(anio, mes)[1]
-    return dias / 7
+def calcular_semanas_periodo(slots):
+    return sum(slot["days"] for slot in slots) / 7
+
+
+def asignar_slot(fecha: datetime, slots):
+    for slot in slots:
+        if slot["kind"] == "month":
+            if fecha.year == slot["anio"] and fecha.month == slot["mes"]:
+                return slot["label"]
+            continue
+
+        if slot["start"] <= fecha <= slot["end"]:
+            return slot["label"]
+
+    return None
 
 
 def main():
@@ -157,6 +198,7 @@ def main():
     required_cols = [
         "TIPO",
         "CLIENTE",
+        "FECHA",
         "AÑO",
         "MES",
         "Sucursal_normalizada",
@@ -172,6 +214,8 @@ def main():
     df["Total"] = pd.to_numeric(df["Total"], errors="coerce").fillna(0)
     df["AÑO"] = pd.to_numeric(df["AÑO"], errors="coerce")
     df["MES"] = pd.to_numeric(df["MES"], errors="coerce")
+    df["FECHA"] = df["FECHA"].fillna("").astype(str).str.strip()
+    df["FECHA_DT"] = pd.to_datetime(df["FECHA"], format="%d/%m/%Y", errors="coerce")
 
     for col in ["TIPO", "CLIENTE", "Sucursal_normalizada", "Producto_normalizado"]:
         df[col] = df[col].fillna("").astype(str).str.strip()
@@ -180,18 +224,16 @@ def main():
     df["Sucursal_normalizada"] = df["Sucursal_normalizada"].replace("", "OTROS")
     df.loc[df["Sucursal_normalizada"].isna(), "Sucursal_normalizada"] = "OTROS"
 
-    periodos_base = obtener_periodos_base(df)
-    if not periodos_base:
+    slots_base = obtener_slots_base(df)
+    if not slots_base:
         debug("No hay períodos disponibles para construir reposicion_base")
         return
 
-    periodos_validos = set(periodos_base)
-    df = df[df.apply(lambda row: (int(row["AÑO"]), int(row["MES"])) in periodos_validos, axis=1)].copy()
-
-    df["PERIODO_LABEL"] = df.apply(
-        lambda row: etiqueta_periodo(int(row["AÑO"]), int(row["MES"])),
-        axis=1,
-    )
+    df["PERIODO_LABEL"] = df["FECHA_DT"].apply(lambda fecha: asignar_slot(fecha, slots_base) if pd.notna(fecha) else None)
+    df = df[df["PERIODO_LABEL"].notna()].copy()
+    if df.empty:
+        debug("No hay filas dentro de ENE/FEB/MAR y S1/S2 de abril")
+        return
 
     df["VENTA_UND"] = df.apply(
         lambda row: row["Cantidad"] if row["TIPO"] == "VENTA" else 0,
@@ -224,7 +266,7 @@ def main():
         "NETO_MONTO": "sum",
     })
 
-    orden_periodos = [etiqueta_periodo(anio, mes) for anio, mes in periodos_base]
+    orden_periodos = [slot["label"] for slot in slots_base]
     mapa_slots = {periodo: idx + 1 for idx, periodo in enumerate(orden_periodos)}
     agrupado["SLOT"] = agrupado["PERIODO_LABEL"].map(mapa_slots)
 
@@ -257,7 +299,7 @@ def main():
     nc_monto_cols = [f"MES_{slot}_NC_MONTO" for slot in range(1, MESES_BASE + 1)]
     neto_monto_cols = [f"MES_{slot}_NETO_MONTO" for slot in range(1, MESES_BASE + 1)]
     cantidad_periodos = len(orden_periodos)
-    semanas_periodo = calcular_semanas_periodo(periodos_base)
+    semanas_periodo = calcular_semanas_periodo(slots_base)
 
     pivot["PERIODO_BASE"] = " / ".join(orden_periodos)
     pivot["VENTA_UND_PERIODO"] = pivot[venta_cols].sum(axis=1)
