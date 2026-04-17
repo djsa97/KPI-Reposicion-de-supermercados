@@ -115,6 +115,9 @@ def columnas_finales():
             f"MES_{slot}_VENTA_UND",
             f"MES_{slot}_NC_UND",
             f"MES_{slot}_NETO_UND",
+            f"MES_{slot}_VENTA_MONTO",
+            f"MES_{slot}_NC_MONTO",
+            f"MES_{slot}_NETO_MONTO",
         ])
 
     columnas.extend([
@@ -123,6 +126,10 @@ def columnas_finales():
         "NETO_UND_PERIODO",
         "PROMEDIO_MENSUAL_UND",
         "PROMEDIO_SEMANAL_UND",
+        "VENTA_MONTO_PERIODO",
+        "NC_MONTO_PERIODO",
+        "NETO_MONTO_PERIODO",
+        "PROMEDIO_MENSUAL_MONTO",
         "MESES_CON_DATOS",
     ])
     return columnas
@@ -155,12 +162,14 @@ def main():
         "Sucursal_normalizada",
         "Producto_normalizado",
         "Cantidad",
+        "Total",
     ]
     faltantes = [c for c in required_cols if c not in df.columns]
     if faltantes:
         raise RuntimeError(f"Faltan columnas en movimientos_final: {faltantes}")
 
     df["Cantidad"] = pd.to_numeric(df["Cantidad"], errors="coerce").fillna(0)
+    df["Total"] = pd.to_numeric(df["Total"], errors="coerce").fillna(0)
     df["AÑO"] = pd.to_numeric(df["AÑO"], errors="coerce")
     df["MES"] = pd.to_numeric(df["MES"], errors="coerce")
 
@@ -193,6 +202,15 @@ def main():
         axis=1,
     )
     df["NETO_UND"] = df["VENTA_UND"] - df["NC_UND"]
+    df["VENTA_MONTO"] = df.apply(
+        lambda row: row["Total"] if row["TIPO"] == "VENTA" else 0,
+        axis=1,
+    )
+    df["NC_MONTO"] = df.apply(
+        lambda row: abs(row["Total"]) if row["TIPO"] == "NC" else 0,
+        axis=1,
+    )
+    df["NETO_MONTO"] = df["VENTA_MONTO"] - df["NC_MONTO"]
 
     agrupado = df.groupby(
         ["CLIENTE", "Sucursal_normalizada", "Producto_normalizado", "PERIODO_LABEL"],
@@ -201,6 +219,9 @@ def main():
         "VENTA_UND": "sum",
         "NC_UND": "sum",
         "NETO_UND": "sum",
+        "VENTA_MONTO": "sum",
+        "NC_MONTO": "sum",
+        "NETO_MONTO": "sum",
     })
 
     orden_periodos = [etiqueta_periodo(anio, mes) for anio, mes in periodos_base]
@@ -210,7 +231,7 @@ def main():
     pivot = agrupado.pivot_table(
         index=["CLIENTE", "Sucursal_normalizada", "Producto_normalizado"],
         columns="SLOT",
-        values=["VENTA_UND", "NC_UND", "NETO_UND"],
+        values=["VENTA_UND", "NC_UND", "NETO_UND", "VENTA_MONTO", "NC_MONTO", "NETO_MONTO"],
         aggfunc="sum",
         fill_value=0,
     )
@@ -224,7 +245,7 @@ def main():
 
     for slot in range(1, MESES_BASE + 1):
         pivot[f"MES_{slot}_LABEL"] = orden_periodos[slot - 1] if slot <= len(orden_periodos) else ""
-        for metrica in ["VENTA_UND", "NC_UND", "NETO_UND"]:
+        for metrica in ["VENTA_UND", "NC_UND", "NETO_UND", "VENTA_MONTO", "NC_MONTO", "NETO_MONTO"]:
             col = f"MES_{slot}_{metrica}"
             if col not in pivot.columns:
                 pivot[col] = 0.0
@@ -232,6 +253,9 @@ def main():
     venta_cols = [f"MES_{slot}_VENTA_UND" for slot in range(1, MESES_BASE + 1)]
     nc_cols = [f"MES_{slot}_NC_UND" for slot in range(1, MESES_BASE + 1)]
     neto_cols = [f"MES_{slot}_NETO_UND" for slot in range(1, MESES_BASE + 1)]
+    venta_monto_cols = [f"MES_{slot}_VENTA_MONTO" for slot in range(1, MESES_BASE + 1)]
+    nc_monto_cols = [f"MES_{slot}_NC_MONTO" for slot in range(1, MESES_BASE + 1)]
+    neto_monto_cols = [f"MES_{slot}_NETO_MONTO" for slot in range(1, MESES_BASE + 1)]
     cantidad_periodos = len(orden_periodos)
     semanas_periodo = calcular_semanas_periodo(periodos_base)
 
@@ -241,11 +265,15 @@ def main():
     pivot["NETO_UND_PERIODO"] = pivot[neto_cols].sum(axis=1)
     pivot["PROMEDIO_MENSUAL_UND"] = (pivot["NETO_UND_PERIODO"] / cantidad_periodos).round(0).astype(int)
     pivot["PROMEDIO_SEMANAL_UND"] = (pivot["NETO_UND_PERIODO"] / semanas_periodo).round(0).astype(int)
+    pivot["VENTA_MONTO_PERIODO"] = pivot[venta_monto_cols].sum(axis=1)
+    pivot["NC_MONTO_PERIODO"] = pivot[nc_monto_cols].sum(axis=1)
+    pivot["NETO_MONTO_PERIODO"] = pivot[neto_monto_cols].sum(axis=1)
+    pivot["PROMEDIO_MENSUAL_MONTO"] = (pivot["NETO_MONTO_PERIODO"] / cantidad_periodos).round(0).astype(int)
     pivot["MESES_CON_DATOS"] = (pivot[neto_cols] != 0).sum(axis=1)
 
     base_final = pivot[columnas_finales()].copy()
     base_final = base_final.sort_values(
-        ["CLIENTE", "Sucursal", "PROMEDIO_MENSUAL_UND"],
+        ["CLIENTE", "Sucursal", "PROMEDIO_MENSUAL_MONTO"],
         ascending=[True, True, False],
     )
 
@@ -262,6 +290,10 @@ def main():
         "NETO_UND_PERIODO",
         "PROMEDIO_MENSUAL_UND",
         "PROMEDIO_SEMANAL_UND",
+        "VENTA_MONTO_PERIODO",
+        "NC_MONTO_PERIODO",
+        "NETO_MONTO_PERIODO",
+        "PROMEDIO_MENSUAL_MONTO",
         "MESES_CON_DATOS",
     ]
     for slot in range(1, MESES_BASE + 1):
@@ -269,6 +301,9 @@ def main():
             f"MES_{slot}_VENTA_UND",
             f"MES_{slot}_NC_UND",
             f"MES_{slot}_NETO_UND",
+            f"MES_{slot}_VENTA_MONTO",
+            f"MES_{slot}_NC_MONTO",
+            f"MES_{slot}_NETO_MONTO",
         ])
 
     for col in columnas_enteras:

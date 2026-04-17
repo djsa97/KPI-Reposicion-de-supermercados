@@ -162,9 +162,16 @@ ALIASES_SUCURSALES = {
 
 @st.cache_resource
 def get_client():
-    if "gcp_service_account" in st.secrets:
+    service_account_info = None
+    try:
+        secrets_dict = st.secrets.to_dict()
+        service_account_info = secrets_dict.get("gcp_service_account")
+    except Exception:
+        service_account_info = None
+
+    if service_account_info:
         creds = Credentials.from_service_account_info(
-            dict(st.secrets["gcp_service_account"]),
+            dict(service_account_info),
             scopes=SCOPES,
         )
     else:
@@ -195,7 +202,16 @@ def load_data():
             f"MES_{slot}_VENTA_UND",
             f"MES_{slot}_NC_UND",
             f"MES_{slot}_NETO_UND",
+            f"MES_{slot}_VENTA_MONTO",
+            f"MES_{slot}_NC_MONTO",
+            f"MES_{slot}_NETO_MONTO",
         ])
+    numeric_cols.extend([
+        "VENTA_MONTO_PERIODO",
+        "NC_MONTO_PERIODO",
+        "NETO_MONTO_PERIODO",
+        "PROMEDIO_MENSUAL_MONTO",
+    ])
 
     for col in numeric_cols:
         if col in df.columns:
@@ -281,6 +297,10 @@ def fmt_num(x):
         return "0"
 
 
+def fmt_money(x):
+    return fmt_num(x)
+
+
 def label_mes(df: pd.DataFrame, slot: int) -> str:
     col = f"MES_{slot}_LABEL"
     if col in df.columns and not df.empty:
@@ -362,6 +382,40 @@ def build_tabla_principal(df: pd.DataFrame) -> pd.DataFrame:
     return vista
 
 
+def build_tabla_principal_montos(df: pd.DataFrame) -> pd.DataFrame:
+    vista = df[["CLIENTE", "Sucursal", "Producto"]].copy()
+    labels = meses_objetivo(df)
+    mapa = mapa_periodos(df)
+
+    columnas_monto = []
+    for label in labels:
+        slot = mapa.get(label)
+        if not slot:
+            continue
+        col_destino = f"Monto neto {label}"
+        vista[col_destino] = df[f"MES_{slot}_NETO_MONTO"].round(0).astype(int)
+        columnas_monto.append(col_destino)
+
+    vista["Prom. 3 meses monto"] = vista[columnas_monto].mean(axis=1).round(0).astype(int) if columnas_monto else 0
+    vista["Total meses actuales monto"] = vista[columnas_monto].sum(axis=1).round(0).astype(int) if columnas_monto else 0
+    return vista
+
+
+def build_tabla_supermercado_montos(df: pd.DataFrame) -> pd.DataFrame:
+    tabla = build_tabla_principal_montos(df)
+    if tabla.empty:
+        return pd.DataFrame(columns=["CLIENTE"])
+
+    columnas_monto = [c for c in tabla.columns if c.startswith("Monto neto ")]
+    columnas_sumar = columnas_monto + ["Prom. 3 meses monto", "Total meses actuales monto"]
+
+    return (
+        tabla.groupby("CLIENTE", as_index=False)[columnas_sumar]
+        .sum()
+        .sort_values("Total meses actuales monto", ascending=False)
+    )
+
+
 def style_detalle(df: pd.DataFrame, referencia_producto_detalle: dict[str, float]):
     cols_meses = [c for c in df.columns if c.startswith("Prom. semanal neto ")]
     cols_objetivo = cols_meses + ["Prom. 3 meses"]
@@ -392,6 +446,11 @@ def style_detalle(df: pd.DataFrame, referencia_producto_detalle: dict[str, float
     return df.style.apply(style_row, axis=1).format(formatters)
 
 
+def style_montos_supermercado(df: pd.DataFrame):
+    columnas_monto = [c for c in df.columns if c != "CLIENTE"]
+    return df.style.format({col: fmt_money for col in columnas_monto})
+
+
 def construir_tendencia_productos(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for label in meses_objetivo(df):
@@ -417,6 +476,35 @@ def construir_tendencia_productos(df: pd.DataFrame) -> pd.DataFrame:
     return tendencia[tendencia["Producto"].isin(top_productos)].copy()
 
 
+def construir_tendencia_productos_monto(df: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    mapa = mapa_periodos(df)
+
+    for label in meses_objetivo(df):
+        slot = mapa.get(label)
+        if not slot:
+            continue
+        tmp = pd.DataFrame({
+            "Producto": df["Producto"].values,
+            "Monto": df[f"MES_{slot}_NETO_MONTO"].values,
+        })
+        tmp = tmp.groupby("Producto", as_index=False)["Monto"].sum()
+        tmp["Mes"] = label
+        rows.append(tmp)
+
+    if not rows:
+        return pd.DataFrame(columns=["Producto", "Monto", "Mes"])
+
+    tendencia = pd.concat(rows, ignore_index=True)
+    ranking = (
+        tendencia.groupby("Producto", as_index=False)["Monto"]
+        .mean()
+        .sort_values("Monto", ascending=False)
+    )
+    top_productos = ranking.head(7)["Producto"].tolist()
+    return tendencia[tendencia["Producto"].isin(top_productos)].copy()
+
+
 def construir_ranking_sucursales(df: pd.DataFrame) -> pd.DataFrame:
     tabla = build_tabla_principal(df)
     if tabla.empty:
@@ -434,6 +522,23 @@ def construir_ranking_sucursales(df: pd.DataFrame) -> pd.DataFrame:
 
 def construir_supermercados_producto(df: pd.DataFrame, producto: str, metrica: str) -> pd.DataFrame:
     tabla = build_tabla_principal(df)
+    if tabla.empty:
+        return pd.DataFrame(columns=["CLIENTE", metrica])
+
+    base = tabla[tabla["Producto"] == producto].copy()
+    if base.empty:
+        return pd.DataFrame(columns=["CLIENTE", metrica])
+
+    return (
+        base.groupby("CLIENTE", as_index=False)[metrica]
+        .sum()
+        .sort_values(metrica, ascending=False)
+        .head(12)
+    )
+
+
+def construir_supermercados_producto_monto(df: pd.DataFrame, producto: str, metrica: str) -> pd.DataFrame:
+    tabla = build_tabla_principal_montos(df)
     if tabla.empty:
         return pd.DataFrame(columns=["CLIENTE", metrica])
 
@@ -481,6 +586,38 @@ def construir_evolucion_supermercados_producto(df: pd.DataFrame, producto: str) 
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=["CLIENTE", "Mes", "Promedio"])
 
 
+def construir_evolucion_supermercados_producto_monto(df: pd.DataFrame, producto: str) -> pd.DataFrame:
+    tabla = build_tabla_principal_montos(df)
+    if tabla.empty:
+        return pd.DataFrame(columns=["CLIENTE", "Mes", "Monto"])
+
+    base = tabla[tabla["Producto"] == producto].copy()
+    if base.empty:
+        return pd.DataFrame(columns=["CLIENTE", "Mes", "Monto"])
+
+    top_clientes = (
+        base.groupby("CLIENTE", as_index=False)["Prom. 3 meses monto"]
+        .sum()
+        .sort_values("Prom. 3 meses monto", ascending=False)
+        .head(8)["CLIENTE"]
+        .tolist()
+    )
+
+    rows = []
+    for label in meses_objetivo(df):
+        col = f"Monto neto {label}"
+        tmp = (
+            base[base["CLIENTE"].isin(top_clientes)]
+            .groupby("CLIENTE", as_index=False)[col]
+            .sum()
+            .rename(columns={col: "Monto"})
+        )
+        tmp["Mes"] = label
+        rows.append(tmp)
+
+    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=["CLIENTE", "Mes", "Monto"])
+
+
 def construir_mix_productos_supermercado(df: pd.DataFrame) -> pd.DataFrame:
     tabla = build_tabla_principal(df)
     if tabla.empty:
@@ -514,6 +651,39 @@ def construir_mix_productos_supermercado(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def construir_mix_productos_supermercado_monto(df: pd.DataFrame) -> pd.DataFrame:
+    tabla = build_tabla_principal_montos(df)
+    if tabla.empty:
+        return pd.DataFrame(columns=["CLIENTE", "Producto", "Prom. 3 meses monto"])
+
+    top_clientes = (
+        tabla.groupby("CLIENTE", as_index=False)["Prom. 3 meses monto"]
+        .sum()
+        .sort_values("Prom. 3 meses monto", ascending=False)
+        .head(8)["CLIENTE"]
+        .tolist()
+    )
+
+    top_productos = (
+        tabla.groupby("Producto", as_index=False)["Prom. 3 meses monto"]
+        .sum()
+        .sort_values("Prom. 3 meses monto", ascending=False)
+        .head(6)["Producto"]
+        .tolist()
+    )
+
+    base = tabla[
+        tabla["CLIENTE"].isin(top_clientes) &
+        tabla["Producto"].isin(top_productos)
+    ].copy()
+
+    return (
+        base.groupby(["CLIENTE", "Producto"], as_index=False)["Prom. 3 meses monto"]
+        .sum()
+        .sort_values(["CLIENTE", "Prom. 3 meses monto"], ascending=[True, False])
+    )
+
+
 def construir_sucursales_producto(df: pd.DataFrame, producto: str, metrica: str) -> pd.DataFrame:
     tabla = build_tabla_principal(df)
     if tabla.empty:
@@ -531,6 +701,53 @@ def construir_sucursales_producto(df: pd.DataFrame, producto: str, metrica: str)
     )
     ranking["Etiqueta"] = ranking["CLIENTE"] + " | " + ranking["Sucursal"]
     return ranking
+
+
+def construir_sucursales_producto_monto(df: pd.DataFrame, producto: str, metrica: str) -> pd.DataFrame:
+    tabla = build_tabla_principal_montos(df)
+    if tabla.empty:
+        return pd.DataFrame(columns=["Etiqueta", metrica])
+
+    base = tabla[tabla["Producto"] == producto].copy()
+    if base.empty:
+        return pd.DataFrame(columns=["Etiqueta", metrica])
+
+    ranking = (
+        base.groupby(["CLIENTE", "Sucursal"], as_index=False)[metrica]
+        .sum()
+        .sort_values(metrica, ascending=False)
+        .head(15)
+    )
+    ranking["Etiqueta"] = ranking["CLIENTE"] + " | " + ranking["Sucursal"]
+    return ranking
+
+
+def construir_tendencia_supermercados_monto(df: pd.DataFrame) -> pd.DataFrame:
+    tabla = build_tabla_principal_montos(df)
+    if tabla.empty:
+        return pd.DataFrame(columns=["CLIENTE", "Mes", "Monto"])
+
+    top_clientes = (
+        tabla.groupby("CLIENTE", as_index=False)["Total meses actuales monto"]
+        .sum()
+        .sort_values("Total meses actuales monto", ascending=False)
+        .head(8)["CLIENTE"]
+        .tolist()
+    )
+
+    rows = []
+    for label in meses_objetivo(df):
+        col = f"Monto neto {label}"
+        tmp = (
+            tabla[tabla["CLIENTE"].isin(top_clientes)]
+            .groupby("CLIENTE", as_index=False)[col]
+            .sum()
+            .rename(columns={col: "Monto"})
+        )
+        tmp["Mes"] = label
+        rows.append(tmp)
+
+    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=["CLIENTE", "Mes", "Monto"])
 
 
 st.set_page_config(
@@ -557,7 +774,7 @@ if df.empty:
     st.stop()
 
 st.caption("Todos los valores mostrados son netos: venta menos nota de crédito.")
-st.caption("Objetivo de lectura: promedio semanal neto de enero, febrero, marzo y promedio de 3 meses.")
+st.caption("La tabla principal sigue en unidades. Desde Visualizaciones de seguimiento todo pasa a monto neto.")
 st.caption(f"Período disponible hoy en la base: {df['PERIODO_BASE'].iloc[0]}")
 
 labels_activos = meses_objetivo(df)
@@ -606,23 +823,12 @@ if df_filtrado.empty:
     st.warning("No hay datos para los filtros seleccionados.")
     st.stop()
 
-st.subheader("Promedio semanal neto por producto")
 tabla_productos = build_producto_resumen(df_filtrado)
 promedio_general = float(tabla_productos["Prom. 3 meses"].mean()) if not tabla_productos.empty else 0
 referencia_producto = (
     tabla_productos.set_index("Producto")["Prom. 3 meses"].to_dict()
     if not tabla_productos.empty else {}
 )
-
-st.dataframe(
-    tabla_productos.style.format({
-        col: fmt_num for col in tabla_productos.columns if col != "Producto"
-    }),
-    width="stretch",
-    hide_index=True,
-)
-
-st.caption(f"Promedio general de la tabla superior: {fmt_num(promedio_general)}")
 
 st.subheader("Detalle por supermercado, sucursal y producto")
 
@@ -663,11 +869,56 @@ st.dataframe(
     hide_index=True,
 )
 
-st.subheader("Visualizaciones de seguimiento")
-st.caption("Estos gráficos usan el mismo universo filtrado del dashboard para facilitar el seguimiento de productos, supermercados y sucursales.")
+st.subheader("Promedio semanal neto por producto")
+st.dataframe(
+    tabla_productos.style.format({
+        col: fmt_num for col in tabla_productos.columns if col != "Producto"
+    }),
+    width="stretch",
+    hide_index=True,
+)
 
-tendencia_productos = construir_tendencia_productos(df_filtrado)
-mix_productos_supermercado = construir_mix_productos_supermercado(df_filtrado)
+st.caption(f"Promedio general de la tabla superior: {fmt_num(promedio_general)}")
+
+st.subheader("Visualizaciones de seguimiento")
+st.caption("Desde esta sección todo está en monto neto. Las dos tablas de arriba quedan en unidades como referencia operativa.")
+
+tabla_supermercado_montos = build_tabla_supermercado_montos(df_filtrado)
+st.markdown("**Monto neto total por supermercado**")
+if tabla_supermercado_montos.empty:
+    st.info("No hay datos suficientes para construir la tabla de monto neto por supermercado.")
+else:
+    st.dataframe(
+        style_montos_supermercado(tabla_supermercado_montos),
+        width="stretch",
+        hide_index=True,
+    )
+
+tendencia_productos = construir_tendencia_productos_monto(df_filtrado)
+tendencia_supermercados = construir_tendencia_supermercados_monto(df_filtrado)
+mix_productos_supermercado = construir_mix_productos_supermercado_monto(df_filtrado)
+
+st.markdown("**Tendencia mensual por supermercado**")
+if tendencia_supermercados.empty:
+    st.info("No hay datos suficientes para la tendencia mensual por supermercado.")
+else:
+    fig_tendencia_super = px.line(
+        tendencia_supermercados,
+        x="Mes",
+        y="Monto",
+        color="CLIENTE",
+        markers=True,
+        line_shape="linear",
+    )
+    fig_tendencia_super.update_layout(
+        height=460,
+        margin=dict(l=20, r=20, t=20, b=20),
+        yaxis_title="Monto neto",
+        xaxis_title="Mes",
+        legend_title="Supermercado",
+    )
+    fig_tendencia_super.update_yaxes(tickformat=",.0f")
+    st.plotly_chart(fig_tendencia_super, use_container_width=True)
 
 v1, v2 = st.columns([2, 2])
 with v1:
@@ -678,16 +929,20 @@ with v1:
         index=0 if productos_vis else None,
     )
 with v2:
-    metrica_vis_options = ["Prom. 3 meses"] + [f"Prom. semanal neto {label}" for label in labels_activos]
-    metrica_vis_sel = st.selectbox(
+    metrica_vis_labels = {"Prom. 3 meses (monto)": "Prom. 3 meses monto"}
+    for label in labels_activos:
+        metrica_vis_labels[f"Monto neto {label}"] = f"Monto neto {label}"
+
+    metrica_vis_sel_label = st.selectbox(
         "Métrica del análisis",
-        metrica_vis_options,
+        list(metrica_vis_labels.keys()),
         index=0,
     )
+    metrica_vis_sel = metrica_vis_labels[metrica_vis_sel_label]
 
-ranking_clientes_producto = construir_supermercados_producto(df_filtrado, producto_vis_sel, metrica_vis_sel)
-evolucion_supermercados_producto = construir_evolucion_supermercados_producto(df_filtrado, producto_vis_sel)
-ranking_sucursales_producto = construir_sucursales_producto(df_filtrado, producto_vis_sel, metrica_vis_sel)
+ranking_clientes_producto = construir_supermercados_producto_monto(df_filtrado, producto_vis_sel, metrica_vis_sel)
+evolucion_supermercados_producto = construir_evolucion_supermercados_producto_monto(df_filtrado, producto_vis_sel)
+ranking_sucursales_producto = construir_sucursales_producto_monto(df_filtrado, producto_vis_sel, metrica_vis_sel)
 
 g1, g2 = st.columns(2)
 
@@ -699,7 +954,7 @@ with g1:
         fig_tendencia = px.line(
             tendencia_productos,
             x="Mes",
-            y="Promedio",
+            y="Monto",
             color="Producto",
             markers=True,
             line_shape="linear",
@@ -707,10 +962,11 @@ with g1:
         fig_tendencia.update_layout(
             height=420,
             margin=dict(l=20, r=20, t=20, b=20),
-            yaxis_title="Promedio semanal neto",
+            yaxis_title="Monto neto",
             xaxis_title="Mes",
             legend_title="Producto",
         )
+        fig_tendencia.update_yaxes(tickformat=",.0f")
         st.plotly_chart(fig_tendencia, use_container_width=True)
 
 with g2:
@@ -730,12 +986,14 @@ with g2:
             height=420,
             margin=dict(l=20, r=20, t=20, b=20),
             yaxis_title="Supermercado",
-            xaxis_title=metrica_vis_sel,
+            xaxis_title="Monto neto",
             showlegend=False,
         )
+        fig_clientes.update_xaxes(tickformat=",.0f")
         st.plotly_chart(fig_clientes, use_container_width=True)
 
-g3, g4 = st.columns(2)
+g3 = st.columns(1)[0]
+g4 = st.columns(1)[0]
 
 with g3:
     st.markdown(f"**Evolución por supermercado de {producto_vis_sel}**")
@@ -745,20 +1003,23 @@ with g3:
         fig_evolucion = px.line(
             evolucion_supermercados_producto,
             x="Mes",
-            y="Promedio",
+            y="Monto",
             color="CLIENTE",
             markers=True,
         )
         fig_evolucion.update_layout(
             height=460,
             margin=dict(l=20, r=20, t=20, b=20),
-            yaxis_title="Promedio semanal neto",
+            yaxis_title="Monto neto",
             xaxis_title="Mes",
             legend_title="Supermercado",
         )
+        fig_evolucion.update_yaxes(tickformat=",.0f")
         st.plotly_chart(fig_evolucion, use_container_width=True)
 
-with g4:
+g5, g6 = st.columns(2)
+
+with g5:
     st.markdown(f"**Sucursales líderes de {producto_vis_sel}**")
     if ranking_sucursales_producto.empty:
         st.info("No hay datos suficientes para graficar sucursales.")
@@ -775,27 +1036,30 @@ with g4:
             height=460,
             margin=dict(l=20, r=20, t=20, b=20),
             yaxis_title="Sucursal",
-            xaxis_title=metrica_vis_sel,
+            xaxis_title="Monto neto",
             showlegend=False,
         )
+        fig_sucursales.update_xaxes(tickformat=",.0f")
         st.plotly_chart(fig_sucursales, use_container_width=True)
 
-st.markdown("**Mix de productos por supermercado**")
-if mix_productos_supermercado.empty:
-    st.info("No hay datos suficientes para el mix de productos.")
-else:
-    fig_mix = px.bar(
-        mix_productos_supermercado,
-        x="CLIENTE",
-        y="Prom. 3 meses",
-        color="Producto",
-        barmode="stack",
-    )
-    fig_mix.update_layout(
-        height=440,
-        margin=dict(l=20, r=20, t=20, b=20),
-        xaxis_title="Supermercado",
-        yaxis_title="Prom. 3 meses",
-        legend_title="Producto",
-    )
-    st.plotly_chart(fig_mix, use_container_width=True)
+with g6:
+    st.markdown("**Mix de productos por supermercado**")
+    if mix_productos_supermercado.empty:
+        st.info("No hay datos suficientes para el mix de productos.")
+    else:
+        fig_mix = px.bar(
+            mix_productos_supermercado,
+            x="CLIENTE",
+            y="Prom. 3 meses monto",
+            color="Producto",
+            barmode="stack",
+        )
+        fig_mix.update_layout(
+            height=440,
+            margin=dict(l=20, r=20, t=20, b=20),
+            xaxis_title="Supermercado",
+            yaxis_title="Monto neto promedio 3 meses",
+            legend_title="Producto",
+        )
+        fig_mix.update_yaxes(tickformat=",.0f")
+        st.plotly_chart(fig_mix, use_container_width=True)
