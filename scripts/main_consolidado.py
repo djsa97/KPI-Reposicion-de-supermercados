@@ -390,7 +390,9 @@ def consolidar_ventas(data_ventas, catalogo_sucursales=None):
         tipo = "VENTA"
         cliente = limpiar_texto(row.get("CLIENTE", ""))
         fecha = limpiar_texto(row.get("FECHA", ""))
-        sucursal_original = limpiar_texto(row.get("Sucursal", ""))
+        sucursal_original = limpiar_texto(
+            row.get("Sucursal_homologada", "") or row.get("Sucursal", "")
+        )
         producto_original = limpiar_texto(row.get("Producto", ""))
 
         cantidad = a_float(row.get("Cantidad", 0))
@@ -434,7 +436,9 @@ def consolidar_nc(data_nc, catalogo_sucursales=None):
         tipo = "NC"
         cliente = limpiar_texto(row.get("CLIENTE", ""))
         fecha = limpiar_texto(row.get("FECHA", ""))
-        sucursal_original = limpiar_texto(row.get("Sucursal", ""))
+        sucursal_original = limpiar_texto(
+            row.get("Sucursal_homologada", "") or row.get("Sucursal", "")
+        )
         producto_original = limpiar_texto(row.get("Producto", ""))
 
         cantidad = a_float(row.get("Cantidad", 0))

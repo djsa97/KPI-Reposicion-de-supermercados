@@ -8,6 +8,8 @@ import unicodedata
 
 
 SPREADSHEET_ID = "1B21HlZ5MBVj6Orc1rkLM1_mZycXLDEJDIT9OF9Gw9Kw"
+STOCK_SPREADSHEET_ID = "1wHioBhy8usSOY-M5OTW_bfIQrFTP5BO4r4LM0SCswYo"
+STOCK_WORKSHEET_GID = 897103869
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CREDS_FILE = os.getenv(
@@ -19,6 +21,7 @@ MESES_BASE = 5
 CLIENTES_EXCLUIDOS = set()
 COL_PROM_UND = "Prom. períodos"
 COL_PROM_MONTO = "Prom. períodos monto"
+COL_DEPOSITO = "Depósito actual"
 
 SUCURSALES_VALIDAS = {
     "ALIMENTOS ESPECIALES S.A.": ["ESPANA", "LAURELES", "MOLAS", "OTROS", "PERSERVERANCIA"],
@@ -231,6 +234,231 @@ def load_data():
     return df
 
 
+def mapear_producto_a_columna_stock(producto: str) -> str | None:
+    texto = str(producto or "").upper().strip()
+    if "30 TIPO B" in texto:
+        return "TIPO_B"
+    if "30 TIPO A" in texto:
+        return "PAQ_30"
+    if "12 TIPO A" in texto:
+        return "PAQ_12"
+    if "20 TIPO A" in texto:
+        return "PAQ_20"
+    if "6 TIPO A" in texto:
+        return "PAQ_6"
+    return None
+
+
+def normalizar_supermercado_stock(texto: str) -> tuple[str, str]:
+    raw = str(texto or "").strip()
+    base = normalizar_texto_base(raw)
+
+    if not base:
+        return "OTROS", "OTROS"
+
+    def has(*tokens):
+        return all(token in base for token in tokens)
+
+    if base.startswith("arete") or "arete " in base:
+        if "sausalito" in base:
+            return "CAFSA S.A.", "SAUSALITO"
+        if "pinedo" in base:
+            return "CAFSA S.A.", "PINEDO"
+        if "lambare" in base:
+            return "CAFSA S.A.", "LAMBARE"
+        if has("primer", "presidente"):
+            return "CAFSA S.A.", "PRIMER PRESIDENTE"
+        return "CAFSA S.A.", "OTROS"
+
+    if has("casa", "rica"):
+        if "laureles" in base:
+            return "ALIMENTOS ESPECIALES S.A.", "LAURELES"
+        if "molas" in base:
+            return "ALIMENTOS ESPECIALES S.A.", "MOLAS"
+        if "espana" in base:
+            return "ALIMENTOS ESPECIALES S.A.", "ESPANA"
+        if "perseverancia" in base or "perserverancia" in base:
+            return "ALIMENTOS ESPECIALES S.A.", "PERSERVERANCIA"
+        return "ALIMENTOS ESPECIALES S.A.", "OTROS"
+
+    if base.startswith("lt ") or base.startswith("lt"):
+        if has("villa", "hayes"):
+            return "LT Sociedad Anonima", "VILLA HAYES"
+        if "costa" in base:
+            return "LT Sociedad Anonima", "COSTA V.H."
+        if "emboscada" in base:
+            return "LT Sociedad Anonima", "EMBOSCADA"
+        if "limpio" in base:
+            return "LT Sociedad Anonima", "LIMPIO"
+        if "central" in base:
+            return "LT Sociedad Anonima", "CENTRAL"
+        return "LT Sociedad Anonima", "OTROS"
+
+    if "super box" in base:
+        return "SUPER BOX S. A.", "LUQUE"
+
+    if has("villa", "sofia"):
+        if "luque" in base:
+            return "SUPERMERCADO VILLA SOFIA S.A.", "LUQUE"
+        if "central" in base:
+            return "SUPERMERCADO VILLA SOFIA S.A.", "CENTRAL"
+        if "sajonia" in base:
+            return "SUPERMERCADO VILLA SOFIA S.A.", "OTROS"
+        return "SUPERMERCADO VILLA SOFIA S.A.", "OTROS"
+
+    if "biggie" in base:
+        if has("denis", "roa"):
+            return "Biggie S.A.", "DENIS ROA"
+        if has("genaro", "romero"):
+            return "Biggie S.A.", "GENARO ROMERO"
+        if "palmeras" in base:
+            return "Biggie S.A.", "LAS PALMERAS"
+        if "morra" in base:
+            return "Biggie S.A.", "VILLA MORRA"
+        if "herrera" in base:
+            return "Biggie S.A.", "HERRERA"
+        if "molas" in base:
+            return "Biggie S.A.", "MOLAS Y TEBICUARY"
+        if "santa teresa" in base or "sta teresa" in base:
+            return "Biggie S.A.", "SANTA TERESA"
+        if "pacheco" in base or "pachexo" in base:
+            return "Biggie S.A.", "PACHECO"
+        if has("primer", "presidente"):
+            return "Biggie S.A.", "PRIMER PRESIDENTE"
+        return "Biggie S.A.", "OTROS"
+
+    if "dmart" in base or "delivery hero" in base:
+        if has("jose", "asuncion", "flores"):
+            return "DELIVERY HERO DMART PARAGUAY S.A", "JOSE ASUNCION FLORES"
+        if "lambare" in base:
+            return "DELIVERY HERO DMART PARAGUAY S.A", "LAMBARE"
+        if "luque" in base:
+            return "DELIVERY HERO DMART PARAGUAY S.A", "LUQUE"
+        if has("san", "lorenzo"):
+            return "DELIVERY HERO DMART PARAGUAY S.A", "SAN LORENZO"
+        return "DELIVERY HERO DMART PARAGUAY S.A", "OTROS"
+
+    if "salemma" in base:
+        if "carmelitas" in base:
+            return "SALEMMA RETAIL SA", "CARMELITAS"
+        return "SALEMMA RETAIL SA", "OTROS"
+
+    if "pacifico" in base or "cebre" in base:
+        return "CEBRE S.A.", "SUPERMERCADO PACIFICO CEBRE S.A."
+
+    if "delimarket" in base:
+        return "RETAIL S.A.", "DELIMARKET"
+    if has("denis", "roa"):
+        return "RETAIL S.A.", "DENIS ROA"
+    if "hiperseis" in base or "hiperseis" in base:
+        return "RETAIL S.A.", "HIPERSEIS"
+    if "japon" in base:
+        return "RETAIL S.A.", "JAPON"
+    if "laureles" in base:
+        return "RETAIL S.A.", "LOS LAURELES"
+    if "mburukuya" in base or "mburucuya" in base:
+        return "RETAIL S.A.", "MBURUKUYA"
+    if "mundimark" in base:
+        return "RETAIL S.A.", "MUNDIMARK"
+    if "negrita" in base:
+        return "RETAIL S.A.", "NEGRITA"
+    if "portal" in base:
+        return "RETAIL S.A.", "PORTAL"
+    if has("san", "bernardino"):
+        return "RETAIL S.A.", "SAN BERNARDINO"
+    if has("capiata", "ruta", "2"):
+        return "RETAIL S.A.", "STOCK CAPIATA RUTA 2"
+    if "villeta" in base:
+        return "RETAIL S.A.", "VILLETA"
+    if has("stock", "mariano"):
+        return "RETAIL S.A.", "STOCK MARIANO ROQUE ALONSO 2"
+    if has("martin", "ledesma"):
+        return "RETAIL S.A.", "STOCK MARTIN LEDESMA"
+
+    if has("acceso", "sur") or base == "acceso":
+        return "CADENA REAL S.A.", "ACCESO SUR"
+    if "baja ave" in base:
+        return "CADENA REAL S.A.", "BAJA AVE"
+    if "fernando" in base or has("fdo", "mora"):
+        return "CADENA REAL S.A.", "FDO DE LA MORA"
+    if has("felix", "bogado"):
+        return "CADENA REAL S.A.", "FELIX BOGADO"
+    if "nemby2" in base or "nemby 2" in base:
+        return "CADENA REAL S.A.", "NEMBY 2"
+    if "nemby1" in base or "ñemby1" in base:
+        return "CADENA REAL S.A.", "ÑEMBY1"
+    if "ruta1" in base or "ruta 1" in base:
+        return "CADENA REAL S.A.", "RUTA1"
+    if "ruta2" in base or "ruta 2" in base:
+        return "CADENA REAL S.A.", "RUTA2"
+    if has("san", "vicente"):
+        return "CADENA REAL S.A.", "SAN VICENTE"
+    if has("villa", "morra"):
+        return "CADENA REAL S.A.", "VILLA MORRA"
+
+    return "OTROS", "OTROS"
+
+
+@st.cache_data(ttl=120)
+def load_stock_actual():
+    client = get_client()
+    try:
+        sheet = client.open_by_key(STOCK_SPREADSHEET_ID)
+        ws = sheet.get_worksheet_by_id(STOCK_WORKSHEET_GID)
+        rows = ws.get_all_values()
+    except Exception:
+        return {}
+
+    if len(rows) <= 1:
+        return {}
+
+    data = []
+    for row in rows[1:]:
+        padded = row + [""] * max(0, 17 - len(row))
+        data.append({
+            "timestamp": padded[0].strip(),
+            "supermercado": padded[2].strip(),
+            "PAQ_30": padded[12].strip() if len(padded) > 12 else "",
+            "PAQ_12": padded[13].strip() if len(padded) > 13 else "",
+            "PAQ_20": padded[14].strip() if len(padded) > 14 else "",
+            "PAQ_6": padded[15].strip() if len(padded) > 15 else "",
+            "TIPO_B": padded[16].strip() if len(padded) > 16 else "",
+        })
+
+    stock = pd.DataFrame(data)
+    if stock.empty:
+        return {}
+
+    stock["timestamp_dt"] = pd.to_datetime(stock["timestamp"], dayfirst=True, errors="coerce")
+    stock = stock.sort_values("timestamp_dt")
+    stock = stock.dropna(subset=["supermercado"])
+    stock = stock[stock["supermercado"].astype(str).str.strip() != ""].copy()
+    stock = stock.drop_duplicates(subset=["supermercado"], keep="last")
+
+    for col in ["PAQ_30", "PAQ_12", "PAQ_20", "PAQ_6", "TIPO_B"]:
+        stock[col] = pd.to_numeric(stock[col], errors="coerce").fillna(0)
+
+    stock_map = {}
+    for _, row in stock.iterrows():
+        cliente, sucursal = normalizar_supermercado_stock(row["supermercado"])
+        for col in ["PAQ_30", "PAQ_12", "PAQ_20", "PAQ_6", "TIPO_B"]:
+            stock_map[(cliente, sucursal, col)] = int(round(float(row[col])))
+
+    return stock_map
+
+
+def deposito_actual_row(cliente: str, sucursal: str, producto: str, stock_map: dict):
+    col_stock = mapear_producto_a_columna_stock(producto)
+    if not col_stock:
+        return None
+
+    key = (str(cliente).strip(), str(sucursal).strip(), col_stock)
+    if key not in stock_map:
+        return None
+
+    return int(stock_map[key])
+
+
 def producto_relevante(producto: str) -> bool:
     texto = str(producto).upper()
     return ("HUEVO" in texto) or ("PLANCHA" in texto)
@@ -303,6 +531,12 @@ def fmt_money(x):
     return fmt_num(x)
 
 
+def fmt_deposito(x):
+    if x is None or pd.isna(x):
+        return "n/a"
+    return fmt_num(x)
+
+
 def label_mes(df: pd.DataFrame, slot: int) -> str:
     col = f"MES_{slot}_LABEL"
     if col in df.columns and not df.empty:
@@ -372,8 +606,21 @@ def build_producto_resumen(df: pd.DataFrame) -> pd.DataFrame:
     return vista.sort_values([COL_PROM_UND, "Producto"], ascending=[False, True])
 
 
-def build_tabla_principal(df: pd.DataFrame) -> pd.DataFrame:
+def build_tabla_principal(df: pd.DataFrame, stock_map: dict | None = None) -> pd.DataFrame:
     vista = df[["CLIENTE", "Sucursal", "Producto"]].copy()
+    stock_map = stock_map or {}
+
+    vista[COL_DEPOSITO] = vista.apply(
+        lambda row: deposito_actual_row(
+            row["CLIENTE"],
+            row["Sucursal"],
+            row["Producto"],
+            stock_map,
+        ),
+        axis=1,
+    )
+
+    vista = vista[["CLIENTE", "Producto", COL_DEPOSITO]].copy()
     labels = meses_objetivo(df)
 
     columnas_prom = []
@@ -443,10 +690,12 @@ def style_detalle(df: pd.DataFrame, referencia_producto_detalle: dict[str, float
 
         return styles
 
-    formatters = {
-        col: fmt_num for col in df.columns
-        if col not in {"CLIENTE", "Sucursal", "Producto", "Producto"}
-    }
+    formatters = {}
+    for col in df.columns:
+        if col in {"CLIENTE", "Producto"}:
+            continue
+        formatters[col] = fmt_deposito if col == COL_DEPOSITO else fmt_num
+
     return df.style.apply(style_row, axis=1).format(formatters)
 
 
@@ -834,14 +1083,13 @@ referencia_producto = (
     if not tabla_productos.empty else {}
 )
 
-st.subheader("Detalle por supermercado, sucursal y producto")
+st.subheader("Detalle por supermercado y producto")
 
 o1, o2 = st.columns([2, 2])
 
 with o1:
     opciones_orden = {
         "Cliente": "CLIENTE",
-        "Sucursal": "Sucursal",
         "Producto": "Producto",
         "Prom. períodos": COL_PROM_UND,
     }
@@ -857,13 +1105,19 @@ with o1:
 with o2:
     ver_filas = st.selectbox("Filas visibles", [50, 100, 200, 500], index=1)
 
-tabla_principal = build_tabla_principal(df_filtrado)
+stock_map = load_stock_actual()
+if not stock_map:
+    st.caption(
+        "Depósito actual queda en 0 hasta que el sheet de stock esté compartido con el bot o tenga datos disponibles."
+    )
+
+tabla_principal = build_tabla_principal(df_filtrado, stock_map=stock_map)
 referencia_producto_detalle = (
     tabla_principal.groupby("Producto")[COL_PROM_UND].mean().to_dict()
     if not tabla_principal.empty else {}
 )
 col_orden = opciones_orden[ordenar_por]
-ascending = col_orden in {"CLIENTE", "Sucursal", "Producto"}
+ascending = col_orden in {"CLIENTE", "Producto"}
 tabla_principal = tabla_principal.sort_values(col_orden, ascending=ascending)
 
 tabla_principal = tabla_principal.head(ver_filas)
