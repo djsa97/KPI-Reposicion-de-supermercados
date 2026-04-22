@@ -606,21 +606,13 @@ def build_producto_resumen(df: pd.DataFrame) -> pd.DataFrame:
     return vista.sort_values([COL_PROM_UND, "Producto"], ascending=[False, True])
 
 
-def build_tabla_principal(df: pd.DataFrame, stock_map: dict | None = None) -> pd.DataFrame:
-    vista = df[["CLIENTE", "Sucursal", "Producto"]].copy()
-    stock_map = stock_map or {}
-
-    vista[COL_DEPOSITO] = vista.apply(
-        lambda row: deposito_actual_row(
-            row["CLIENTE"],
-            row["Sucursal"],
-            row["Producto"],
-            stock_map,
-        ),
-        axis=1,
-    )
-
-    vista = vista[["CLIENTE", "Producto", COL_DEPOSITO]].copy()
+def build_tabla_principal(df: pd.DataFrame) -> pd.DataFrame:
+    # For the first detail table, show the homologated branch/sucursal as the
+    # leading label and hide the old separate "Sucursal" column entirely.
+    vista = pd.DataFrame({
+        "CLIENTE": df["Sucursal"].fillna("").astype(str),
+        "Producto": df["Producto"].fillna("").astype(str),
+    })
     labels = meses_objetivo(df)
 
     columnas_prom = []
@@ -694,7 +686,7 @@ def style_detalle(df: pd.DataFrame, referencia_producto_detalle: dict[str, float
     for col in df.columns:
         if col in {"CLIENTE", "Producto"}:
             continue
-        formatters[col] = fmt_deposito if col == COL_DEPOSITO else fmt_num
+        formatters[col] = fmt_num
 
     return df.style.apply(style_row, axis=1).format(formatters)
 
@@ -1105,13 +1097,7 @@ with o1:
 with o2:
     ver_filas = st.selectbox("Filas visibles", [50, 100, 200, 500], index=1)
 
-stock_map = load_stock_actual()
-if not stock_map:
-    st.caption(
-        "Depósito actual queda en 0 hasta que el sheet de stock esté compartido con el bot o tenga datos disponibles."
-    )
-
-tabla_principal = build_tabla_principal(df_filtrado, stock_map=stock_map)
+tabla_principal = build_tabla_principal(df_filtrado)
 referencia_producto_detalle = (
     tabla_principal.groupby("Producto")[COL_PROM_UND].mean().to_dict()
     if not tabla_principal.empty else {}
