@@ -382,7 +382,7 @@ def build_tabla_principal(df: pd.DataFrame) -> pd.DataFrame:
     # For the first detail table, show the homologated branch/sucursal as the
     # leading label and hide the old separate "Sucursal" column entirely.
     vista = pd.DataFrame({
-        "CLIENTE": df["Sucursal"].fillna("").astype(str),
+        "Sucursal": df["Sucursal"].fillna("").astype(str),
         "Producto": df["Producto"].fillna("").astype(str),
     })
     labels = meses_objetivo(df)
@@ -456,7 +456,7 @@ def style_detalle(df: pd.DataFrame, referencia_producto_detalle: dict[str, float
 
     formatters = {}
     for col in df.columns:
-        if col in {"CLIENTE", "Producto"}:
+        if col in {"Sucursal", "Producto"}:
             continue
         formatters[col] = fmt_num
 
@@ -784,7 +784,7 @@ if df.empty:
 df = df[~df["CLIENTE"].isin(CLIENTES_EXCLUIDOS)].copy()
 df = df[~df["Producto"].str.contains("CARBON", case=False, na=False)].copy()
 df = df[df["Producto"].apply(producto_relevante)].copy()
-df["Sucursal"] = df.apply(lambda row: normalizar_sucursal_dashboard(row["CLIENTE"], row["Sucursal"]), axis=1)
+df["Sucursal"] = df["Sucursal"].fillna("").astype(str).str.strip()
 
 if df.empty:
     st.warning("No hay datos luego de aplicar exclusiones base.")
@@ -847,13 +847,13 @@ referencia_producto = (
     if not tabla_productos.empty else {}
 )
 
-st.subheader("Detalle por supermercado y producto")
+st.subheader("Detalle por sucursal homologada y producto")
 
 o1, o2 = st.columns([2, 2])
 
 with o1:
     opciones_orden = {
-        "Cliente": "CLIENTE",
+        "Sucursal": "Sucursal",
         "Producto": "Producto",
         "Prom. períodos": COL_PROM_UND,
     }
@@ -875,7 +875,7 @@ referencia_producto_detalle = (
     if not tabla_principal.empty else {}
 )
 col_orden = opciones_orden[ordenar_por]
-ascending = col_orden in {"CLIENTE", "Producto"}
+ascending = col_orden in {"Sucursal", "Producto"}
 tabla_principal = tabla_principal.sort_values(col_orden, ascending=ascending)
 
 tabla_principal = tabla_principal.head(ver_filas)
