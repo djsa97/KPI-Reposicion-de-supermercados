@@ -39,7 +39,7 @@ SUCURSALES_VALIDAS = {
     "DELIVERY HERO DMART PARAGUAY S.A": {"JOSE ASUNCION FLORES", "LAMBARE", "LUQUE", "OTROS", "SAN LORENZO"},
     "DELIVERY HERO DMART PARAGUAY S.A -": {"JOSE ASUNCION FLORES", "LAMBARE", "LUQUE", "OTROS", "SAN LORENZO"},
     "LT SOCIEDAD ANONIMA": {"CENTRAL", "COSTA V.H.", "EMBOSCADA", "LIMPIO", "OTROS", "VILLA HAYES"},
-    "RETAIL S.A.": {"DELIMARKET", "DENIS ROA", "ESPANA", "HIPERSEIS", "JAPON", "LOS LAURELES", "MBURUKUYA", "MUNDIMARK", "NEGRITA", "OTROS", "PORTAL", "SAN BERNARDINO", "STOCK CAPIATA RUTA 2", "VILLETA", "STOCK MARIANO ROQUE ALONSO 2", "STOCK MARTIN LEDESMA", "TOTAL"},
+    "RETAIL S.A.": {"DELIMARKET", "DENIS ROA", "ESPANA", "HIPERSEIS", "JAPON", "LOS LAURELES", "MBURUKUYA", "MUNDIMARK", "NEGRITA", "OTROS", "PORTAL", "SAN BERNARDINO", "STOCK CAPIATA RUTA 2", "VILLETA", "STOCK MARIANO ROQUE ALONSO 2", "STOCK MARTIN LEDESMA", "SUPER SEIS", "TOTAL"},
     "SALEMMA RETAIL SA": {"CARMELITAS", "OTROS"},
     "SUPER BOX S. A.": {"LUQUE"},
     "SUPERMERCADO VILLA SOFIA S.A.": {"LUQUE", "CENTRAL", "OTROS"},
@@ -355,6 +355,22 @@ def leer_hoja(spreadsheet, nombre_hoja):
     return data
 
 
+def obtener_sucursal_origen(row):
+    candidatos = [
+        "Sucursal_homologada",
+        "Sucursal homologada",
+        "SUCURSAL_HOMOLOGADA",
+        "",
+    ]
+
+    for key in candidatos:
+        valor = limpiar_texto(row.get(key, ""))
+        if valor:
+            return valor
+
+    return limpiar_texto(row.get("Sucursal", ""))
+
+
 def escribir_hoja(spreadsheet, nombre_hoja, filas):
     ws = spreadsheet.worksheet(nombre_hoja)
     ws.clear()
@@ -390,9 +406,7 @@ def consolidar_ventas(data_ventas, catalogo_sucursales=None):
         tipo = "VENTA"
         cliente = limpiar_texto(row.get("CLIENTE", ""))
         fecha = limpiar_texto(row.get("FECHA", ""))
-        sucursal_original = limpiar_texto(
-            row.get("Sucursal_homologada", "") or row.get("Sucursal", "")
-        )
+        sucursal_original = obtener_sucursal_origen(row)
         producto_original = limpiar_texto(row.get("Producto", ""))
 
         cantidad = a_float(row.get("Cantidad", 0))
@@ -436,9 +450,7 @@ def consolidar_nc(data_nc, catalogo_sucursales=None):
         tipo = "NC"
         cliente = limpiar_texto(row.get("CLIENTE", ""))
         fecha = limpiar_texto(row.get("FECHA", ""))
-        sucursal_original = limpiar_texto(
-            row.get("Sucursal_homologada", "") or row.get("Sucursal", "")
-        )
+        sucursal_original = obtener_sucursal_origen(row)
         producto_original = limpiar_texto(row.get("Producto", ""))
 
         cantidad = a_float(row.get("Cantidad", 0))
