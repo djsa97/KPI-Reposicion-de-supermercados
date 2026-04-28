@@ -1,6 +1,7 @@
 import calendar
 import os
 from datetime import datetime
+import math
 
 import pandas as pd
 import gspread
@@ -19,7 +20,6 @@ CREDS_FILE = os.getenv(
 
 SHEET_SOURCE = "movimientos_final"
 SHEET_DEST = "reposicion_base"
-MESES_BASE = 5
 
 
 # =========================
@@ -92,47 +92,47 @@ def obtener_slots_base(df: pd.DataFrame):
     if fechas.empty:
         return []
 
-    anio = int(fechas.max().year)
-    return [
-        {
-            "label": etiqueta_periodo(anio, 1),
-            "kind": "month",
-            "anio": anio,
-            "mes": 1,
-            "days": 31,
-        },
-        {
-            "label": etiqueta_periodo(anio, 2),
-            "kind": "month",
-            "anio": anio,
-            "mes": 2,
-            "days": 28,
-        },
-        {
-            "label": etiqueta_periodo(anio, 3),
-            "kind": "month",
-            "anio": anio,
-            "mes": 3,
-            "days": 31,
-        },
-        {
-            "label": f"S1 ABR-{anio}",
-            "kind": "range",
-            "start": datetime(anio, 4, 1),
-            "end": datetime(anio, 4, 7),
-            "days": 7,
-        },
-        {
-            "label": f"S2 ABR-{anio}",
-            "kind": "range",
-            "start": datetime(anio, 4, 8),
-            "end": datetime(anio, 4, 14),
-            "days": 7,
-        },
-    ]
+    ultimo_dia = fechas.max()
+    ultimo_mes = ultimo_dia.replace(day=1)
+    meses_disponibles = sorted({
+        fecha.replace(day=1)
+        for fecha in fechas
+    })
+
+    slots = []
+    for inicio_mes in meses_disponibles:
+        anio = int(inicio_mes.year)
+        mes = int(inicio_mes.month)
+        dias_mes = calendar.monthrange(anio, mes)[1]
+
+        if inicio_mes < ultimo_mes:
+            slots.append({
+                "label": etiqueta_periodo(anio, mes),
+                "kind": "month",
+                "anio": anio,
+                "mes": mes,
+                "days": dias_mes,
+            })
+            continue
+
+        cantidad_semanas = max(1, math.ceil(int(ultimo_dia.day) / 7))
+        for semana_idx in range(cantidad_semanas):
+            dia_inicio = semana_idx * 7 + 1
+            dia_fin = min(dia_inicio + 6, dias_mes, int(ultimo_dia.day))
+            if dia_inicio > dia_fin:
+                continue
+            slots.append({
+                "label": f"S{semana_idx + 1} {MESES_ES.get(mes, str(mes))}-{anio}",
+                "kind": "range",
+                "start": datetime(anio, mes, dia_inicio),
+                "end": datetime(anio, mes, dia_fin),
+                "days": dia_fin - dia_inicio + 1,
+            })
+
+    return slots
 
 
-def columnas_finales():
+def columnas_finales(total_slots: int):
     columnas = [
         "PERIODO_BASE",
         "CLIENTE",
@@ -140,9 +140,10 @@ def columnas_finales():
         "Producto",
     ]
 
-    for slot in range(1, MESES_BASE + 1):
+    for slot in range(1, total_slots + 1):
         columnas.extend([
             f"MES_{slot}_LABEL",
+            f"MES_{slot}_SEMANAS",
             f"MES_{slot}_VENTA_UND",
             f"MES_{slot}_NC_UND",
             f"MES_{slot}_NETO_UND",
@@ -290,19 +291,21 @@ def main():
         "Producto_normalizado": "Producto",
     })
 
-    for slot in range(1, MESES_BASE + 1):
+    total_slots = len(orden_periodos)
+    for slot in range(1, total_slots + 1):
         pivot[f"MES_{slot}_LABEL"] = orden_periodos[slot - 1] if slot <= len(orden_periodos) else ""
+        pivot[f"MES_{slot}_SEMANAS"] = slots_base[slot - 1]["days"] / 7 if slot <= len(slots_base) else 0
         for metrica in ["VENTA_UND", "NC_UND", "NETO_UND", "VENTA_MONTO", "NC_MONTO", "NETO_MONTO"]:
             col = f"MES_{slot}_{metrica}"
             if col not in pivot.columns:
                 pivot[col] = 0.0
 
-    venta_cols = [f"MES_{slot}_VENTA_UND" for slot in range(1, MESES_BASE + 1)]
-    nc_cols = [f"MES_{slot}_NC_UND" for slot in range(1, MESES_BASE + 1)]
-    neto_cols = [f"MES_{slot}_NETO_UND" for slot in range(1, MESES_BASE + 1)]
-    venta_monto_cols = [f"MES_{slot}_VENTA_MONTO" for slot in range(1, MESES_BASE + 1)]
-    nc_monto_cols = [f"MES_{slot}_NC_MONTO" for slot in range(1, MESES_BASE + 1)]
-    neto_monto_cols = [f"MES_{slot}_NETO_MONTO" for slot in range(1, MESES_BASE + 1)]
+    venta_cols = [f"MES_{slot}_VENTA_UND" for slot in range(1, total_slots + 1)]
+    nc_cols = [f"MES_{slot}_NC_UND" for slot in range(1, total_slots + 1)]
+    neto_cols = [f"MES_{slot}_NETO_UND" for slot in range(1, total_slots + 1)]
+    venta_monto_cols = [f"MES_{slot}_VENTA_MONTO" for slot in range(1, total_slots + 1)]
+    nc_monto_cols = [f"MES_{slot}_NC_MONTO" for slot in range(1, total_slots + 1)]
+    neto_monto_cols = [f"MES_{slot}_NETO_MONTO" for slot in range(1, total_slots + 1)]
     cantidad_periodos = len(orden_periodos)
     semanas_periodo = calcular_semanas_periodo(slots_base)
 
@@ -318,14 +321,14 @@ def main():
     pivot["PROMEDIO_MENSUAL_MONTO"] = (pivot["NETO_MONTO_PERIODO"] / cantidad_periodos).round(0).astype(int)
     pivot["MESES_CON_DATOS"] = (pivot[neto_cols] != 0).sum(axis=1)
 
-    base_final = pivot[columnas_finales()].copy()
+    base_final = pivot[columnas_finales(total_slots)].copy()
     base_final = base_final.sort_values(
         ["CLIENTE", "Sucursal", "PROMEDIO_MENSUAL_MONTO"],
         ascending=[True, True, False],
     )
 
     columnas_texto = {"PERIODO_BASE", "CLIENTE", "Sucursal", "Producto"} | {
-        f"MES_{slot}_LABEL" for slot in range(1, MESES_BASE + 1)
+        f"MES_{slot}_LABEL" for slot in range(1, total_slots + 1)
     }
     for col in base_final.columns:
         if col not in columnas_texto:
@@ -343,7 +346,7 @@ def main():
         "PROMEDIO_MENSUAL_MONTO",
         "MESES_CON_DATOS",
     ]
-    for slot in range(1, MESES_BASE + 1):
+    for slot in range(1, total_slots + 1):
         columnas_enteras.extend([
             f"MES_{slot}_VENTA_UND",
             f"MES_{slot}_NC_UND",
@@ -356,6 +359,11 @@ def main():
     for col in columnas_enteras:
         if col in base_final.columns:
             base_final[col] = base_final[col].round(0).astype(int)
+
+    for slot in range(1, total_slots + 1):
+        col = f"MES_{slot}_SEMANAS"
+        if col in base_final.columns:
+            base_final[col] = pd.to_numeric(base_final[col], errors="coerce").fillna(0).round(4)
 
     debug(f"Período base: {' / '.join(orden_periodos)}")
     debug(f"Filas agrupadas: {len(base_final)}")

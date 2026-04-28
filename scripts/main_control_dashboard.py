@@ -1,5 +1,6 @@
 import calendar
 import os
+import re
 import unicodedata
 
 import gspread
@@ -16,7 +17,6 @@ CREDS_FILE = os.getenv(
 )
 SHEET_SOURCE = "reposicion_base"
 SHEET_DEST = "control_dashboard"
-MESES_BASE = 3
 CLIENTES_EXCLUIDOS = set()
 
 SUCURSALES_VALIDAS = {
@@ -231,6 +231,8 @@ def normalizar_sucursal_dashboard(cliente: str, sucursal: str) -> str:
 
 def semanas_del_mes(label: str) -> float:
     label = str(label or "").upper()
+    if label.startswith("S"):
+        return 1.0
     if label.startswith(("ENE", "MAR", "MAY", "JUL", "AGO", "OCT", "DIC")):
         return 31 / 7
     if label.startswith(("ABR", "JUN", "SEP", "NOV")):
@@ -240,27 +242,35 @@ def semanas_del_mes(label: str) -> float:
     return 30 / 7
 
 
+def semanas_slot(df: pd.DataFrame, slot: int, label: str) -> float:
+    col = f"MES_{slot}_SEMANAS"
+    if col in df.columns and not df.empty:
+        semanas = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        valor = float(semanas.iloc[0]) if not semanas.empty else 0
+        if valor > 0:
+            return valor
+    return semanas_del_mes(label)
+
+
 def cargar_reposicion_base(sheet) -> pd.DataFrame:
     data = sheet.worksheet(SHEET_SOURCE).get_all_records()
     df = pd.DataFrame(data)
     if df.empty:
         return df
 
-    numeric_cols = []
-    for slot in range(1, MESES_BASE + 1):
-        numeric_cols.extend([
-            f"MES_{slot}_VENTA_UND",
-            f"MES_{slot}_NC_UND",
-            f"MES_{slot}_NETO_UND",
-        ])
-    numeric_cols.extend([
+    numeric_cols = [
         "VENTA_UND_PERIODO",
         "NC_UND_PERIODO",
         "NETO_UND_PERIODO",
         "PROMEDIO_MENSUAL_UND",
         "PROMEDIO_SEMANAL_UND",
         "MESES_CON_DATOS",
-    ])
+    ]
+    for col in df.columns:
+        if re.fullmatch(r"MES_\d+_(VENTA|NC|NETO)_UND", col):
+            numeric_cols.append(col)
+        if re.fullmatch(r"MES_\d+_SEMANAS", col):
+            numeric_cols.append(col)
 
     for col in numeric_cols:
         if col in df.columns:
@@ -270,12 +280,23 @@ def cargar_reposicion_base(sheet) -> pd.DataFrame:
         if col in df.columns:
             df[col] = df[col].fillna("").astype(str).str.strip()
 
-    for slot in range(1, MESES_BASE + 1):
-        label_col = f"MES_{slot}_LABEL"
-        if label_col in df.columns:
-            df[label_col] = df[label_col].fillna("").astype(str).str.strip()
+    for col in df.columns:
+        if re.fullmatch(r"MES_\d+_LABEL", col):
+            df[col] = df[col].fillna("").astype(str).str.strip()
 
     return df
+
+
+def slots_disponibles(df: pd.DataFrame) -> list[int]:
+    slots = []
+    for col in df.columns:
+        match = re.fullmatch(r"MES_(\d+)_LABEL", col)
+        if not match:
+            continue
+        slot = int(match.group(1))
+        if not df.empty and str(df[col].iloc[0]).strip():
+            slots.append(slot)
+    return sorted(slots)
 
 
 def build_control_dashboard(df: pd.DataFrame) -> pd.DataFrame:
@@ -291,7 +312,7 @@ def build_control_dashboard(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     labels = []
-    for slot in range(1, MESES_BASE + 1):
+    for slot in slots_disponibles(df):
         label = df[f"MES_{slot}_LABEL"].iloc[0] if f"MES_{slot}_LABEL" in df.columns and not df.empty else ""
         if label:
             labels.append((slot, label))
@@ -310,7 +331,7 @@ def build_control_dashboard(df: pd.DataFrame) -> pd.DataFrame:
 
         prom_cols = []
         for slot, label in labels:
-            semanas = semanas_del_mes(label)
+            semanas = semanas_slot(df, slot, label)
             neto_base = int(round(subset[f"MES_{slot}_NETO_UND"].sum()))
             neto_dash = int(round(subset_dash[f"MES_{slot}_NETO_UND"].sum()))
             excluido = neto_base - neto_dash
@@ -324,7 +345,7 @@ def build_control_dashboard(df: pd.DataFrame) -> pd.DataFrame:
             row[f"{label} PROM_SEMANAL_DASH"] = prom_dash
             prom_cols.append(f"{label} PROM_SEMANAL_DASH")
 
-        row["PROM_3_MESES_DASH"] = (
+        row["PROM_PERIODOS_DASH"] = (
             int(round(pd.Series([row[col] for col in prom_cols]).mean()))
             if prom_cols else 0
         )
@@ -344,8 +365,8 @@ def build_control_dashboard(df: pd.DataFrame) -> pd.DataFrame:
             f"{label} PROM_SEMANAL_BASE",
             f"{label} PROM_SEMANAL_DASH",
         ])
-    columnas.extend(["PROM_3_MESES_DASH", "CONTROL"])
-    control = control[columnas].sort_values(["PROM_3_MESES_DASH", "PRODUCTO"], ascending=[False, True])
+    columnas.extend(["PROM_PERIODOS_DASH", "CONTROL"])
+    control = control[columnas].sort_values(["PROM_PERIODOS_DASH", "PRODUCTO"], ascending=[False, True])
     return control
 
 

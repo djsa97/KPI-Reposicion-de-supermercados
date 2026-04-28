@@ -4,6 +4,7 @@ import gspread
 import plotly.express as px
 from google.oauth2.service_account import Credentials
 import os
+import re
 import unicodedata
 
 
@@ -15,7 +16,6 @@ CREDS_FILE = os.getenv(
     os.path.join(BASE_DIR, "automatizacion-sol-huevos-2-f02d718cb7d4.json"),
 )
 WORKSHEET_NAME = "reposicion_base"
-MESES_BASE = 5
 CLIENTES_EXCLUIDOS = set()
 COL_PROM_UND = "Prom. períodos"
 COL_PROM_MONTO = "Prom. períodos monto"
@@ -198,22 +198,16 @@ def load_data():
         "NC_UND_PERIODO",
         "NETO_UND_PERIODO",
         "MESES_CON_DATOS",
-    ]
-    for slot in range(1, MESES_BASE + 1):
-        numeric_cols.extend([
-            f"MES_{slot}_VENTA_UND",
-            f"MES_{slot}_NC_UND",
-            f"MES_{slot}_NETO_UND",
-            f"MES_{slot}_VENTA_MONTO",
-            f"MES_{slot}_NC_MONTO",
-            f"MES_{slot}_NETO_MONTO",
-        ])
-    numeric_cols.extend([
         "VENTA_MONTO_PERIODO",
         "NC_MONTO_PERIODO",
         "NETO_MONTO_PERIODO",
         "PROMEDIO_MENSUAL_MONTO",
-    ])
+    ]
+    for col in df.columns:
+        if re.fullmatch(r"MES_\d+_(VENTA|NC|NETO)_(UND|MONTO)", col):
+            numeric_cols.append(col)
+        if re.fullmatch(r"MES_\d+_SEMANAS", col):
+            numeric_cols.append(col)
 
     for col in numeric_cols:
         if col in df.columns:
@@ -223,12 +217,23 @@ def load_data():
         if col in df.columns:
             df[col] = df[col].fillna("").astype(str).str.strip()
 
-    for slot in range(1, MESES_BASE + 1):
-        label_col = f"MES_{slot}_LABEL"
-        if label_col in df.columns:
-            df[label_col] = df[label_col].fillna("").astype(str).str.strip()
+    for col in df.columns:
+        if re.fullmatch(r"MES_\d+_LABEL", col):
+            df[col] = df[col].fillna("").astype(str).str.strip()
 
     return df
+
+
+def slots_disponibles(df: pd.DataFrame) -> list[int]:
+    slots = []
+    for col in df.columns:
+        match = re.fullmatch(r"MES_(\d+)_LABEL", col)
+        if not match:
+            continue
+        slot = int(match.group(1))
+        if not df.empty and str(df[col].iloc[0]).strip():
+            slots.append(slot)
+    return sorted(slots)
 
 
 def producto_relevante(producto: str) -> bool:
@@ -319,7 +324,7 @@ def label_mes(df: pd.DataFrame, slot: int) -> str:
 
 
 def semanas_del_mes(label: str) -> float:
-    if label.startswith(("S1 ", "S2 ", "S3 ", "S4 ")):
+    if label.startswith("S"):
         return 1.0
     if label.startswith(("ENE", "MAR", "MAY", "JUL", "AGO", "OCT", "DIC")):
         return 31 / 7
@@ -330,9 +335,19 @@ def semanas_del_mes(label: str) -> float:
     return 4.33
 
 
+def semanas_slot(df: pd.DataFrame, slot: int, label: str) -> float:
+    col = f"MES_{slot}_SEMANAS"
+    if col in df.columns and not df.empty:
+        semanas = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        valor = float(semanas.iloc[0]) if not semanas.empty else 0
+        if valor > 0:
+            return valor
+    return semanas_del_mes(label)
+
+
 def mapa_periodos(df: pd.DataFrame):
     mapa = {}
-    for slot in range(1, MESES_BASE + 1):
+    for slot in slots_disponibles(df):
         label = label_mes(df, slot)
         if label:
             mapa[label] = slot
@@ -341,7 +356,7 @@ def mapa_periodos(df: pd.DataFrame):
 
 def meses_objetivo(df: pd.DataFrame):
     meses = []
-    for slot in range(1, MESES_BASE + 1):
+    for slot in slots_disponibles(df):
         label = label_mes(df, slot)
         if label:
             meses.append(label)
@@ -354,7 +369,7 @@ def valor_promedio_semanal(df: pd.DataFrame, label_objetivo: str) -> pd.Series:
         return pd.Series([0] * len(df), index=df.index)
 
     slot = mapa[label_objetivo]
-    semanas = semanas_del_mes(label_objetivo)
+    semanas = semanas_slot(df, slot, label_objetivo)
     return (df[f"MES_{slot}_NETO_UND"] / semanas).round(0).astype(int)
 
 
@@ -369,7 +384,7 @@ def build_producto_resumen(df: pd.DataFrame) -> pd.DataFrame:
         slot = mapa.get(label)
         if not slot:
             continue
-        serie = (base[f"MES_{slot}_NETO_UND"] / semanas_del_mes(label)).round(0).astype(int)
+        serie = (base[f"MES_{slot}_NETO_UND"] / semanas_slot(df, slot, label)).round(0).astype(int)
         col = f"Prom. semanal neto {label}"
         vista[col] = serie
         columnas_prom.append(col)

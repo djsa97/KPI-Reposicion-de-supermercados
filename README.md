@@ -87,6 +87,27 @@ No subas el JSON al repositorio. En Streamlit Cloud el dashboard ya está prepar
 
 ## Flujo de actualización
 
+Comando único recomendado:
+
+```bash
+python3 scripts/actualizar_reposicion.py
+```
+
+Ese flujo:
+- refresca ventas, notas de crédito y acuerdos desde ERP
+- recompone `movimientos_final`
+- recalcula `reposicion_base`
+- recalcula `control_dashboard`
+- detecta automáticamente los períodos disponibles
+
+Si ya cargaste los datos y solo querés reconstruir la base del dashboard:
+
+```bash
+python3 scripts/actualizar_reposicion.py --solo-base
+```
+
+Si necesitás correrlo paso a paso, sigue disponible este flujo:
+
 ```bash
 python3 scripts/main_ventas.py
 python3 scripts/main_notas_credito.py
