@@ -198,6 +198,7 @@ def main():
     required_cols = [
         "TIPO",
         "CLIENTE",
+        "CLIENTE_PADRE",
         "FECHA",
         "AÑO",
         "MES",
@@ -217,10 +218,14 @@ def main():
     df["FECHA"] = df["FECHA"].fillna("").astype(str).str.strip()
     df["FECHA_DT"] = pd.to_datetime(df["FECHA"], format="%d/%m/%Y", errors="coerce")
 
-    for col in ["TIPO", "CLIENTE", "Sucursal_normalizada", "Producto_normalizado"]:
+    for col in ["TIPO", "CLIENTE", "CLIENTE_PADRE", "Sucursal_normalizada", "Producto_normalizado"]:
         df[col] = df[col].fillna("").astype(str).str.strip()
 
-    df = df[df["CLIENTE"].apply(cliente_es_supermercado)].copy()
+    df["CLIENTE_PADRE"] = df["CLIENTE_PADRE"].where(
+        df["CLIENTE_PADRE"].ne(""),
+        df["CLIENTE"]
+    )
+    df = df[df["CLIENTE_PADRE"].apply(cliente_es_supermercado)].copy()
     df["Sucursal_normalizada"] = df["Sucursal_normalizada"].replace("", "OTROS")
     df.loc[df["Sucursal_normalizada"].isna(), "Sucursal_normalizada"] = "OTROS"
 

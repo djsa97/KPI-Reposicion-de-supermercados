@@ -379,10 +379,8 @@ def build_producto_resumen(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_tabla_principal(df: pd.DataFrame) -> pd.DataFrame:
-    # For the first detail table, show the homologated branch/sucursal as the
-    # leading label and hide the old separate "Sucursal" column entirely.
     vista = pd.DataFrame({
-        "Sucursal": df["Sucursal"].fillna("").astype(str),
+        "Cliente": df["CLIENTE"].fillna("").astype(str),
         "Producto": df["Producto"].fillna("").astype(str),
     })
     labels = meses_objetivo(df)
@@ -456,7 +454,7 @@ def style_detalle(df: pd.DataFrame, referencia_producto_detalle: dict[str, float
 
     formatters = {}
     for col in df.columns:
-        if col in {"Sucursal", "Producto"}:
+        if col in {"Cliente", "Producto"}:
             continue
         formatters[col] = fmt_num
 
@@ -847,13 +845,13 @@ referencia_producto = (
     if not tabla_productos.empty else {}
 )
 
-st.subheader("Detalle por sucursal homologada y producto")
+st.subheader("Detalle por cliente y producto")
 
 o1, o2 = st.columns([2, 2])
 
 with o1:
     opciones_orden = {
-        "Sucursal": "Sucursal",
+        "Cliente": "Cliente",
         "Producto": "Producto",
         "Prom. períodos": COL_PROM_UND,
     }
@@ -875,7 +873,7 @@ referencia_producto_detalle = (
     if not tabla_principal.empty else {}
 )
 col_orden = opciones_orden[ordenar_por]
-ascending = col_orden in {"Sucursal", "Producto"}
+ascending = col_orden in {"Cliente", "Producto"}
 tabla_principal = tabla_principal.sort_values(col_orden, ascending=ascending)
 
 tabla_principal = tabla_principal.head(ver_filas)

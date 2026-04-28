@@ -351,8 +351,42 @@ def conectar_google_sheet():
 
 def leer_hoja(spreadsheet, nombre_hoja):
     ws = spreadsheet.worksheet(nombre_hoja)
-    data = ws.get_all_records()
-    return data
+    values = ws.get_all_values()
+    if not values:
+        return []
+
+    headers_raw = values[0]
+    headers = [
+        limpiar_texto(header) if limpiar_texto(header) else f"__COL_{idx + 1}"
+        for idx, header in enumerate(headers_raw)
+    ]
+
+    rows = []
+    for raw_row in values[1:]:
+        if not any(limpiar_texto(cell) for cell in raw_row):
+            continue
+
+        padded = raw_row + [""] * (len(headers) - len(raw_row))
+        row = {headers[idx]: padded[idx] for idx in range(len(headers))}
+
+        # Algunas cargas dejan el cliente operativo en la columna H sin encabezado.
+        # La preservamos para poder priorizarla al consolidar.
+        row["CLIENTE_H"] = limpiar_texto(padded[7]) if len(padded) >= 8 else ""
+        rows.append(row)
+
+    return rows
+
+
+def obtener_cliente_padre(row):
+    return limpiar_texto(row.get("CLIENTE", ""))
+
+
+def obtener_cliente_dashboard(row):
+    cliente_h = limpiar_texto(row.get("CLIENTE_H", ""))
+    if cliente_h:
+        return cliente_h
+
+    return obtener_cliente_padre(row)
 
 
 def obtener_sucursal_origen(row):
@@ -378,6 +412,7 @@ def escribir_hoja(spreadsheet, nombre_hoja, filas):
     encabezados = [[
         "TIPO",
         "CLIENTE",
+        "CLIENTE_PADRE",
         "FECHA",
         "AÑO",
         "MES",
@@ -393,7 +428,7 @@ def escribir_hoja(spreadsheet, nombre_hoja, filas):
     ws.update("A1", encabezados)
 
     if filas:
-        ws.update(f"A2:M{len(filas)+1}", filas)
+        ws.update(f"A2:N{len(filas)+1}", filas)
 
 
 # =========================
@@ -404,7 +439,8 @@ def consolidar_ventas(data_ventas, catalogo_sucursales=None):
 
     for row in data_ventas:
         tipo = "VENTA"
-        cliente = limpiar_texto(row.get("CLIENTE", ""))
+        cliente = obtener_cliente_dashboard(row)
+        cliente_padre = obtener_cliente_padre(row)
         fecha = limpiar_texto(row.get("FECHA", ""))
         sucursal_original = obtener_sucursal_origen(row)
         producto_original = limpiar_texto(row.get("Producto", ""))
@@ -421,12 +457,13 @@ def consolidar_ventas(data_ventas, catalogo_sucursales=None):
         mes = dt.month
         semana = dt.isocalendar().week
 
-        sucursal_normalizada = normalizar_sucursal(cliente, sucursal_original, catalogo_sucursales)
+        sucursal_normalizada = normalizar_sucursal(cliente_padre, sucursal_original, catalogo_sucursales)
         producto_normalizado = normalizar_producto(producto_original)
 
         filas.append([
             tipo,
             cliente,
+            cliente_padre,
             fecha,
             anio,
             mes,
@@ -448,7 +485,8 @@ def consolidar_nc(data_nc, catalogo_sucursales=None):
 
     for row in data_nc:
         tipo = "NC"
-        cliente = limpiar_texto(row.get("CLIENTE", ""))
+        cliente = obtener_cliente_dashboard(row)
+        cliente_padre = obtener_cliente_padre(row)
         fecha = limpiar_texto(row.get("FECHA", ""))
         sucursal_original = obtener_sucursal_origen(row)
         producto_original = limpiar_texto(row.get("Producto", ""))
@@ -471,12 +509,13 @@ def consolidar_nc(data_nc, catalogo_sucursales=None):
         mes = dt.month
         semana = dt.isocalendar().week
 
-        sucursal_normalizada = normalizar_sucursal(cliente, sucursal_original, catalogo_sucursales)
+        sucursal_normalizada = normalizar_sucursal(cliente_padre, sucursal_original, catalogo_sucursales)
         producto_normalizado = normalizar_producto(producto_original)
 
         filas.append([
             tipo,
             cliente,
+            cliente_padre,
             fecha,
             anio,
             mes,
@@ -521,8 +560,8 @@ def main():
 
     filas_finales.sort(key=lambda x: (
         x[1],  # cliente
-        datetime.strptime(x[2], "%d/%m/%Y"),  # fecha
-        x[9],  # producto normalizado
+        datetime.strptime(x[3], "%d/%m/%Y"),  # fecha
+        x[10],  # producto normalizado
     ))
 
     debug(f"Escribiendo movimientos_final: {len(filas_finales)} filas...")

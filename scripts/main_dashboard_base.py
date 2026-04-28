@@ -145,7 +145,7 @@ def construir_dashboard_base(data_mov, acuerdos_por_cliente):
 
     # recorrer movimientos_final
     for row in data_mov:
-        cliente = limpiar_texto(row.get("CLIENTE", ""))
+        cliente = limpiar_texto(row.get("CLIENTE_PADRE", "")) or limpiar_texto(row.get("CLIENTE", ""))
         sucursal = limpiar_texto(row.get("Sucursal_normalizada", ""))
         producto = limpiar_texto(row.get("Producto_normalizado", ""))
         tipo = limpiar_texto(row.get("TIPO", ""))
