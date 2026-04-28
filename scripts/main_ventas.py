@@ -2,6 +2,8 @@ import os
 import re
 import json
 import subprocess
+from collections import defaultdict
+from datetime import date
 from urllib.parse import urljoin
 
 import pdfplumber
@@ -22,10 +24,10 @@ ERP_URL = os.getenv("ERP_URL", "https://erpsol.valurq.com.py/#")
 USUARIO = os.getenv("ERP_USER", "")
 CLAVE = os.getenv("ERP_PASSWORD", "")
 
-PDF_PATH = os.path.join(PROJECT_DIR, "data", "ventas_enero_marzo.pdf")
+PDF_PATH = os.path.join(PROJECT_DIR, "data", "ventas_periodo_actual.pdf")
 
-FECHA_DESDE = "2026-01-01"
-FECHA_HASTA = "2026-03-31"
+FECHA_DESDE = os.getenv("ERP_FECHA_DESDE", "2026-01-01")
+FECHA_HASTA = os.getenv("ERP_FECHA_HASTA", date.today().isoformat())
 
 CLIENTES_SUPER_OCR = {
     "SALEMMA RETAIL SA",
@@ -946,7 +948,47 @@ def conectar_google_sheet():
     return worksheet
 
 
+def limpiar_fila_base(row):
+    padded = list(row) + [""] * max(0, 7 - len(row))
+    return [limpiar_texto(value) for value in padded[:7]]
+
+
+def cargar_columnas_extra_existentes(worksheet):
+    values = worksheet.get_all_values()
+    if not values:
+        return [], {}
+
+    header = values[0]
+    extra_headers = header[7:] if len(header) > 7 else []
+    extras_por_clave = defaultdict(list)
+    ocurrencias = defaultdict(int)
+
+    for raw_row in values[1:]:
+        base = limpiar_fila_base(raw_row)
+        key = tuple(base)
+        idx = ocurrencias[key]
+        ocurrencias[key] += 1
+        extras = raw_row[7:] if len(raw_row) > 7 else []
+        extras_por_clave[(key, idx)] = list(extras)
+
+    return extra_headers, extras_por_clave
+
+
 def subir_datos(worksheet, filas):
+    extra_headers, extras_por_clave = cargar_columnas_extra_existentes(worksheet)
+    ocurrencias = defaultdict(int)
+    filas_con_extras = []
+
+    for fila in filas:
+        base = limpiar_fila_base(fila)
+        key = tuple(base)
+        idx = ocurrencias[key]
+        ocurrencias[key] += 1
+        extras = extras_por_clave.get((key, idx), [""] * len(extra_headers))
+        if len(extras) < len(extra_headers):
+            extras = extras + [""] * (len(extra_headers) - len(extras))
+        filas_con_extras.append(base + extras)
+
     debug("Limpiando hoja...")
     worksheet.clear()
 
@@ -958,12 +1000,14 @@ def subir_datos(worksheet, filas):
         "Cantidad",
         "Precio",
         "Total",
-    ]]
+    ] + extra_headers]
     worksheet.update(values=encabezados, range_name="A1")
 
-    if filas:
-        debug(f"Subiendo {len(filas)} filas...")
-        worksheet.update(values=filas, range_name=f"A2:G{len(filas)+1}")
+    total_cols = 7 + len(extra_headers)
+    if filas_con_extras:
+        debug(f"Subiendo {len(filas_con_extras)} filas...")
+        end_col = chr(ord("A") + total_cols - 1)
+        worksheet.update(values=filas_con_extras, range_name=f"A2:{end_col}{len(filas_con_extras)+1}")
     else:
         debug("No hubo filas para subir")
 
