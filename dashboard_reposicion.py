@@ -403,16 +403,21 @@ def build_producto_resumen(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_tabla_principal(df: pd.DataFrame) -> pd.DataFrame:
+    base = df.groupby(["CLIENTE", "Producto"], as_index=False).sum(numeric_only=True)
     vista = pd.DataFrame({
-        "Cliente": df["CLIENTE"].fillna("").astype(str),
-        "Producto": df["Producto"].fillna("").astype(str),
+        "Cliente": base["CLIENTE"].fillna("").astype(str),
+        "Producto": base["Producto"].fillna("").astype(str),
     })
     labels = meses_objetivo(df)
 
     columnas_prom = []
     for label in labels:
         col = f"Prom. semanal neto {label}"
-        vista[col] = valor_promedio_semanal(df, label)
+        slot = mapa_periodos(df).get(label)
+        if not slot:
+            continue
+        serie = (base[f"MES_{slot}_NETO_UND"] / semanas_slot(df, slot, label)).round(0).astype(int)
+        vista[col] = serie
         columnas_prom.append(col)
 
     vista[COL_PROM_UND] = vista[columnas_prom].mean(axis=1).round(0).astype(int) if columnas_prom else 0
