@@ -1,5 +1,7 @@
 import os
 import re
+from collections import defaultdict
+from datetime import date
 from urllib.parse import urljoin
 
 import pdfplumber
@@ -18,10 +20,10 @@ ERP_URL = os.getenv("ERP_URL", "https://erpsol.valurq.com.py/#")
 USUARIO = os.getenv("ERP_USER", "")
 CLAVE = os.getenv("ERP_PASSWORD", "")
 
-PDF_PATH = os.path.join(PROJECT_DIR, "data", "notas_credito_enero_marzo.pdf")
+PDF_PATH = os.path.join(PROJECT_DIR, "data", "notas_credito_periodo_actual.pdf")
 
-FECHA_DESDE = "2026-01-01"
-FECHA_HASTA = "2026-03-31"
+FECHA_DESDE = os.getenv("ERP_FECHA_DESDE", "2026-01-01")
+FECHA_HASTA = os.getenv("ERP_FECHA_HASTA", date.today().isoformat())
 
 
 # =========================
@@ -30,6 +32,7 @@ FECHA_HASTA = "2026-03-31"
 JSON_PATH = os.path.join(PROJECT_DIR, "automatizacion-sol-huevos-2-f02d718cb7d4.json")
 SHEET_ID = "1B21HlZ5MBVj6Orc1rkLM1_mZycXLDEJDIT9OF9Gw9Kw"
 WORKSHEET_NAME = "notas_credito_raw"
+SHEET_CATALOGO = "catalogo_sucursales_reposicion"
 
 
 # =========================
@@ -50,6 +53,15 @@ def limpiar_texto(texto: str) -> str:
     if texto is None:
         return ""
     return " ".join(str(texto).split()).strip()
+
+
+def normalizar_texto(texto: str) -> str:
+    texto = limpiar_texto(texto).upper()
+    texto = texto.replace(".", " ")
+    texto = texto.replace(",", " ")
+    texto = texto.replace("-", " ")
+    texto = " ".join(texto.split())
+    return texto
 
 
 def monto_a_int(texto: str) -> int:
@@ -678,9 +690,62 @@ def conectar_google_sheet():
     return worksheet
 
 
+def cargar_catalogo_clientes_visibles():
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_file(JSON_PATH, scopes=scopes)
+    client = gspread.authorize(creds)
+    spreadsheet = client.open_by_key(SHEET_ID)
+    ws = spreadsheet.worksheet(SHEET_CATALOGO)
+    values = ws.get_all_values()
+    mappings = defaultdict(list)
+
+    for row in values[1:]:
+        if not any(limpiar_texto(cell) for cell in row):
+            continue
+        cliente = limpiar_texto(row[0]) if len(row) > 0 else ""
+        sucursal = limpiar_texto(row[1]) if len(row) > 1 else ""
+        cliente_visible = limpiar_texto(row[2]) if len(row) > 2 else ""
+        tipo = limpiar_texto(row[3]).lower() if len(row) > 3 else ""
+        if not cliente or not cliente_visible:
+            continue
+        mappings[(normalizar_texto(cliente), tipo)].append(
+            (normalizar_texto(sucursal), cliente_visible)
+        )
+
+    return mappings
+
+
+def resolver_cliente_visible(cliente: str, sucursal: str, catalogo) -> str:
+    cliente_key = normalizar_texto(cliente)
+    sucursal_key = normalizar_texto(sucursal)
+    opciones = catalogo.get((cliente_key, "nc"), []) + catalogo.get((cliente_key, ""), [])
+
+    for alias_key, cliente_visible in opciones:
+        if alias_key and alias_key == sucursal_key:
+            return cliente_visible
+
+    for alias_key, cliente_visible in opciones:
+        if alias_key and (alias_key in sucursal_key or sucursal_key in alias_key):
+            return cliente_visible
+
+    for alias_key, cliente_visible in opciones:
+        if not alias_key:
+            return cliente_visible
+
+    return limpiar_texto(cliente)
+
+
 def subir_datos(worksheet, filas):
-    debug("Limpiando hoja...")
-    worksheet.clear()
+    filas_base = []
+    for fila in filas:
+        base = [limpiar_texto(value) for value in list(fila)[:7]]
+        filas_base.append(base)
+
+    debug("Limpiando rango A:G...")
+    worksheet.batch_clear(["A:G"])
 
     encabezados = [[
         "TIPO",
@@ -691,11 +756,11 @@ def subir_datos(worksheet, filas):
         "Cantidad",
         "Total",
     ]]
-    worksheet.update(values=encabezados, range_name="A1")
+    worksheet.update(values=encabezados, range_name="A1:G1")
 
-    if filas:
-        debug(f"Subiendo {len(filas)} filas...")
-        worksheet.update(values=filas, range_name=f"A2:G{len(filas)+1}")
+    if filas_base:
+        debug(f"Subiendo {len(filas_base)} filas...")
+        worksheet.update(values=filas_base, range_name=f"A2:G{len(filas_base)+1}")
     else:
         debug("No hubo filas para subir")
 

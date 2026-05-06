@@ -3,6 +3,7 @@ import pandas as pd
 import gspread
 import plotly.express as px
 from google.oauth2.service_account import Credentials
+from gspread.utils import ValueRenderOption
 import os
 import re
 import unicodedata
@@ -185,8 +186,16 @@ def get_client():
 def load_data():
     client = get_client()
     sheet = client.open_by_key(SPREADSHEET_ID)
-    data = sheet.worksheet(WORKSHEET_NAME).get_all_records()
-    df = pd.DataFrame(data)
+    ws = sheet.worksheet(WORKSHEET_NAME)
+    values = ws.get(
+        value_render_option=ValueRenderOption.unformatted,
+    )
+    if not values:
+        return pd.DataFrame()
+
+    header = values[0]
+    rows = values[1:]
+    df = pd.DataFrame(rows, columns=header)
 
     if df.empty:
         return df

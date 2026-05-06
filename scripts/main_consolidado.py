@@ -15,6 +15,7 @@ SHEET_VENTAS = "movimientos_raw"
 SHEET_NC = "notas_credito_raw"
 SHEET_FINAL = "movimientos_final"
 SHEET_SUCURSALES = "catalogo_sucursales"
+SHEET_CLIENTES_VISIBLE = "catalogo_sucursales_reposicion"
 
 
 SUCURSALES_ALIAS = {
@@ -299,6 +300,35 @@ def cargar_catalogo_sucursales(spreadsheet):
     return catalogo
 
 
+def cargar_catalogo_clientes_visibles(spreadsheet):
+    try:
+        ws = spreadsheet.worksheet(SHEET_CLIENTES_VISIBLE)
+    except gspread.exceptions.WorksheetNotFound:
+        return {}
+
+    values = ws.get_all_values()
+    if not values:
+        return {}
+
+    mappings = {}
+    rows = values[1:]
+    for row in rows:
+        if not any(limpiar_texto(cell) for cell in row):
+            continue
+        cliente = limpiar_texto(row[0]) if len(row) > 0 else ""
+        sucursal = limpiar_texto(row[1]) if len(row) > 1 else ""
+        cliente_visible = limpiar_texto(row[2]) if len(row) > 2 else ""
+
+        if not cliente or not cliente_visible:
+            continue
+
+        cliente_key = normalizar_texto_catalogo(cliente)
+        sucursal_key = normalizar_texto_catalogo(sucursal)
+        mappings.setdefault(cliente_key, []).append((sucursal_key, cliente_visible))
+
+    return mappings
+
+
 def normalizar_sucursal(cliente: str, sucursal: str, catalogo_sucursales=None) -> str:
     s = limpiar_texto(sucursal)
     if not s:
@@ -381,12 +411,36 @@ def obtener_cliente_padre(row):
     return limpiar_texto(row.get("CLIENTE", ""))
 
 
-def obtener_cliente_dashboard(row):
+def obtener_cliente_dashboard(row, catalogo_clientes_visibles=None):
+    cliente_padre = obtener_cliente_padre(row)
+    sucursal_origen = obtener_sucursal_origen(row)
     cliente_h = limpiar_texto(row.get("CLIENTE_H", ""))
-    if cliente_h:
+
+    # Ignoramos basura típica en H: códigos numéricos o repeticiones del padre.
+    if cliente_h and not cliente_h.isdigit() and cliente_h != cliente_padre:
         return cliente_h
 
-    return obtener_cliente_padre(row)
+    cliente_key = normalizar_texto_catalogo(cliente_padre)
+    sucursal_key = normalizar_texto_catalogo(sucursal_origen)
+    opciones = (catalogo_clientes_visibles or {}).get(cliente_key, [])
+
+    if sucursal_key:
+        for alias_key, cliente_visible in opciones:
+            if alias_key and alias_key == sucursal_key:
+                return cliente_visible
+
+        for alias_key, cliente_visible in opciones:
+            if alias_key and (alias_key in sucursal_key or sucursal_key in alias_key):
+                return cliente_visible
+
+    for alias_key, cliente_visible in opciones:
+        if not alias_key:
+            return cliente_visible
+
+    if cliente_h and not cliente_h.isdigit():
+        return cliente_h
+
+    return cliente_padre
 
 
 def obtener_sucursal_origen(row):
@@ -434,12 +488,12 @@ def escribir_hoja(spreadsheet, nombre_hoja, filas):
 # =========================
 # CONSOLIDACIÓN
 # =========================
-def consolidar_ventas(data_ventas, catalogo_sucursales=None):
+def consolidar_ventas(data_ventas, catalogo_sucursales=None, catalogo_clientes_visibles=None):
     filas = []
 
     for row in data_ventas:
         tipo = "VENTA"
-        cliente = obtener_cliente_dashboard(row)
+        cliente = obtener_cliente_dashboard(row, catalogo_clientes_visibles)
         cliente_padre = obtener_cliente_padre(row)
         fecha = limpiar_texto(row.get("FECHA", ""))
         sucursal_original = obtener_sucursal_origen(row)
@@ -480,12 +534,12 @@ def consolidar_ventas(data_ventas, catalogo_sucursales=None):
     return filas
 
 
-def consolidar_nc(data_nc, catalogo_sucursales=None):
+def consolidar_nc(data_nc, catalogo_sucursales=None, catalogo_clientes_visibles=None):
     filas = []
 
     for row in data_nc:
         tipo = "NC"
-        cliente = obtener_cliente_dashboard(row)
+        cliente = obtener_cliente_dashboard(row, catalogo_clientes_visibles)
         cliente_padre = obtener_cliente_padre(row)
         fecha = limpiar_texto(row.get("FECHA", ""))
         sucursal_original = obtener_sucursal_origen(row)
@@ -539,6 +593,7 @@ def main():
     debug("Conectando a Google Sheets...")
     spreadsheet = conectar_google_sheet()
     catalogo_sucursales = cargar_catalogo_sucursales(spreadsheet)
+    catalogo_clientes_visibles = cargar_catalogo_clientes_visibles(spreadsheet)
 
     debug("Leyendo ventas...")
     data_ventas = leer_hoja(spreadsheet, SHEET_VENTAS)
@@ -549,11 +604,11 @@ def main():
     debug(f"NC leídas: {len(data_nc)}")
 
     debug("Consolidando ventas...")
-    filas_ventas = consolidar_ventas(data_ventas, catalogo_sucursales)
+    filas_ventas = consolidar_ventas(data_ventas, catalogo_sucursales, catalogo_clientes_visibles)
     debug(f"Ventas consolidadas: {len(filas_ventas)}")
 
     debug("Consolidando NC...")
-    filas_nc = consolidar_nc(data_nc, catalogo_sucursales)
+    filas_nc = consolidar_nc(data_nc, catalogo_sucursales, catalogo_clientes_visibles)
     debug(f"NC consolidadas: {len(filas_nc)}")
 
     filas_finales = filas_ventas + filas_nc

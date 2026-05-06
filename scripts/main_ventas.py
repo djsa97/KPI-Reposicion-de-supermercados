@@ -54,6 +54,7 @@ CLIENTES_SUPER_OCR = {
 JSON_PATH = os.path.join(PROJECT_DIR, "automatizacion-sol-huevos-2-f02d718cb7d4.json")
 SHEET_ID = "1B21HlZ5MBVj6Orc1rkLM1_mZycXLDEJDIT9OF9Gw9Kw"
 WORKSHEET_NAME = "movimientos_raw"
+SHEET_CATALOGO = "catalogo_sucursales_reposicion"
 
 
 # =========================
@@ -74,6 +75,15 @@ def limpiar_texto(texto: str) -> str:
     if texto is None:
         return ""
     return " ".join(str(texto).split()).strip()
+
+
+def normalizar_texto(texto: str) -> str:
+    texto = limpiar_texto(texto).upper()
+    texto = texto.replace(".", " ")
+    texto = texto.replace(",", " ")
+    texto = texto.replace("-", " ")
+    texto = " ".join(texto.split())
+    return texto
 
 
 def monto_a_int(texto: str) -> int:
@@ -948,49 +958,62 @@ def conectar_google_sheet():
     return worksheet
 
 
-def limpiar_fila_base(row):
-    padded = list(row) + [""] * max(0, 7 - len(row))
-    return [limpiar_texto(value) for value in padded[:7]]
+def cargar_catalogo_clientes_visibles():
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_file(JSON_PATH, scopes=scopes)
+    client = gspread.authorize(creds)
+    spreadsheet = client.open_by_key(SHEET_ID)
+    ws = spreadsheet.worksheet(SHEET_CATALOGO)
+    values = ws.get_all_values()
+    mappings = defaultdict(list)
+
+    for row in values[1:]:
+        if not any(limpiar_texto(cell) for cell in row):
+            continue
+        cliente = limpiar_texto(row[0]) if len(row) > 0 else ""
+        sucursal = limpiar_texto(row[1]) if len(row) > 1 else ""
+        cliente_visible = limpiar_texto(row[2]) if len(row) > 2 else ""
+        tipo = limpiar_texto(row[3]).lower() if len(row) > 3 else ""
+        if not cliente or not cliente_visible:
+            continue
+        mappings[(normalizar_texto(cliente), tipo)].append(
+            (normalizar_texto(sucursal), cliente_visible)
+        )
+
+    return mappings
 
 
-def cargar_columnas_extra_existentes(worksheet):
-    values = worksheet.get_all_values()
-    if not values:
-        return [], {}
+def resolver_cliente_visible(cliente: str, sucursal: str, catalogo) -> str:
+    cliente_key = normalizar_texto(cliente)
+    sucursal_key = normalizar_texto(sucursal)
+    opciones = catalogo.get((cliente_key, ""), [])
 
-    header = values[0]
-    extra_headers = header[7:] if len(header) > 7 else []
-    extras_por_clave = defaultdict(list)
-    ocurrencias = defaultdict(int)
+    for alias_key, cliente_visible in opciones:
+        if alias_key and alias_key == sucursal_key:
+            return cliente_visible
 
-    for raw_row in values[1:]:
-        base = limpiar_fila_base(raw_row)
-        key = tuple(base)
-        idx = ocurrencias[key]
-        ocurrencias[key] += 1
-        extras = raw_row[7:] if len(raw_row) > 7 else []
-        extras_por_clave[(key, idx)] = list(extras)
+    for alias_key, cliente_visible in opciones:
+        if alias_key and (alias_key in sucursal_key or sucursal_key in alias_key):
+            return cliente_visible
 
-    return extra_headers, extras_por_clave
+    for alias_key, cliente_visible in opciones:
+        if not alias_key:
+            return cliente_visible
+
+    return limpiar_texto(cliente)
 
 
 def subir_datos(worksheet, filas):
-    extra_headers, extras_por_clave = cargar_columnas_extra_existentes(worksheet)
-    ocurrencias = defaultdict(int)
-    filas_con_extras = []
-
+    filas_base = []
     for fila in filas:
-        base = limpiar_fila_base(fila)
-        key = tuple(base)
-        idx = ocurrencias[key]
-        ocurrencias[key] += 1
-        extras = extras_por_clave.get((key, idx), [""] * len(extra_headers))
-        if len(extras) < len(extra_headers):
-            extras = extras + [""] * (len(extra_headers) - len(extras))
-        filas_con_extras.append(base + extras)
+        base = [limpiar_texto(value) for value in list(fila)[:7]]
+        filas_base.append(base)
 
-    debug("Limpiando hoja...")
-    worksheet.clear()
+    debug("Limpiando rango A:G...")
+    worksheet.batch_clear(["A:G"])
 
     encabezados = [[
         "CLIENTE",
@@ -1000,14 +1023,12 @@ def subir_datos(worksheet, filas):
         "Cantidad",
         "Precio",
         "Total",
-    ] + extra_headers]
-    worksheet.update(values=encabezados, range_name="A1")
+    ]]
+    worksheet.update(values=encabezados, range_name="A1:G1")
 
-    total_cols = 7 + len(extra_headers)
-    if filas_con_extras:
-        debug(f"Subiendo {len(filas_con_extras)} filas...")
-        end_col = chr(ord("A") + total_cols - 1)
-        worksheet.update(values=filas_con_extras, range_name=f"A2:{end_col}{len(filas_con_extras)+1}")
+    if filas_base:
+        debug(f"Subiendo {len(filas_base)} filas...")
+        worksheet.update(values=filas_base, range_name=f"A2:G{len(filas_base)+1}")
     else:
         debug("No hubo filas para subir")
 

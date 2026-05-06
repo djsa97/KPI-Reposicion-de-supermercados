@@ -6,12 +6,39 @@ from pathlib import Path
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
+DEFAULT_LAUNCHER_ENV = Path.home() / "Documents" / "ERP Launcher" / "launcher.env"
+
+
+def load_env_file(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not path.exists():
+        return values
+
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and value:
+            values[key] = value
+    return values
+
+
+def build_env() -> dict[str, str]:
+    env = os.environ.copy()
+    launcher_home = env.get("ERP_LAUNCHER_HOME")
+    env_path = Path(launcher_home) / "launcher.env" if launcher_home else DEFAULT_LAUNCHER_ENV
+    for key, value in load_env_file(env_path).items():
+        env.setdefault(key, value)
+    return env
 
 
 def run_step(script_rel_path: str):
     script_path = ROOT_DIR / script_rel_path
     print(f"Ejecutando {script_rel_path}...", flush=True)
-    subprocess.run([sys.executable, str(script_path)], cwd=ROOT_DIR, check=True)
+    subprocess.run([sys.executable, str(script_path)], cwd=ROOT_DIR, check=True, env=build_env())
 
 
 def parse_args():
@@ -28,6 +55,7 @@ def parse_args():
 
 def main():
     args = parse_args()
+    env = build_env()
     pasos = [
         "scripts/main_consolidado.py",
         "scripts/main_reposicion_base.py",
@@ -43,7 +71,7 @@ def main():
         ]
         faltantes_erp = [
             env_name for env_name in ("ERP_URL", "ERP_USER", "ERP_PASSWORD")
-            if not os.getenv(env_name)
+            if not env.get(env_name)
         ]
         if faltantes_erp:
             faltantes_txt = ", ".join(faltantes_erp)
