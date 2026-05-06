@@ -908,13 +908,27 @@ st.dataframe(
 )
 
 st.subheader("Promedio semanal neto por producto")
-st.dataframe(
-    tabla_productos.style.format({
-        col: fmt_num for col in tabla_productos.columns if col != "Producto"
-    }),
-    width="stretch",
-    hide_index=True,
-)
+tendencia_productos_und = construir_tendencia_productos(df_filtrado)
+if tendencia_productos_und.empty:
+    st.info("No hay datos suficientes para construir la tendencia por producto.")
+else:
+    fig_tendencia_productos_und = px.line(
+        tendencia_productos_und,
+        x="Mes",
+        y="Promedio",
+        color="Producto",
+        markers=True,
+        line_shape="linear",
+    )
+    fig_tendencia_productos_und.update_layout(
+        height=420,
+        margin=dict(l=20, r=20, t=20, b=20),
+        yaxis_title="Prom. semanal neto",
+        xaxis_title="Período",
+        legend_title="Producto",
+    )
+    fig_tendencia_productos_und.update_yaxes(tickformat=",.0f")
+    st.plotly_chart(fig_tendencia_productos_und, use_container_width=True)
 
 st.caption(f"Promedio general de la tabla superior: {fmt_num(promedio_general)}")
 
