@@ -92,8 +92,8 @@ def obtener_slots_base(df: pd.DataFrame):
     if fechas.empty:
         return []
 
-    ultimo_dia = fechas.max()
-    ultimo_mes = ultimo_dia.replace(day=1)
+    hoy = pd.Timestamp.now().normalize()
+    mes_actual = hoy.replace(day=1)
     meses_disponibles = sorted({
         fecha.replace(day=1)
         for fecha in fechas
@@ -105,7 +105,7 @@ def obtener_slots_base(df: pd.DataFrame):
         mes = int(inicio_mes.month)
         dias_mes = calendar.monthrange(anio, mes)[1]
 
-        if inicio_mes < ultimo_mes:
+        if inicio_mes < mes_actual:
             slots.append({
                 "label": etiqueta_periodo(anio, mes),
                 "kind": "month",
@@ -115,10 +115,25 @@ def obtener_slots_base(df: pd.DataFrame):
             })
             continue
 
-        cantidad_semanas = max(1, math.ceil(int(ultimo_dia.day) / 7))
+        if inicio_mes > mes_actual:
+            slots.append({
+                "label": etiqueta_periodo(anio, mes),
+                "kind": "month",
+                "anio": anio,
+                "mes": mes,
+                "days": dias_mes,
+            })
+            continue
+
+        fechas_mes = fechas[(fechas.dt.year == anio) & (fechas.dt.month == mes)]
+        if fechas_mes.empty:
+            continue
+
+        ultimo_dia_mes = int(min(fechas_mes.max().day, hoy.day))
+        cantidad_semanas = max(1, math.ceil(ultimo_dia_mes / 7))
         for semana_idx in range(cantidad_semanas):
             dia_inicio = semana_idx * 7 + 1
-            dia_fin = min(dia_inicio + 6, dias_mes, int(ultimo_dia.day))
+            dia_fin = min(dia_inicio + 6, dias_mes, ultimo_dia_mes)
             if dia_inicio > dia_fin:
                 continue
             slots.append({
