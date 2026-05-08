@@ -1054,7 +1054,7 @@ with g1:
             legend_title="Producto",
         )
         fig_tendencia.update_yaxes(tickformat=",.0f")
-        st.plotly_chart(fig_tendencia, use_container_width=True)
+        st.plotly_chart(fig_tendencia, use_container_width=True, key="tendencia_venta_producto_monto")
 
 with g2:
     st.markdown(f"**Supermercados para {producto_vis_sel}**")
