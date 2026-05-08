@@ -443,6 +443,48 @@ def build_tabla_principal_montos(df: pd.DataFrame) -> pd.DataFrame:
     return vista
 
 
+def build_tabla_venta_periodos_monto(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=["Producto"])
+
+    base = df.groupby("Producto", as_index=False).sum(numeric_only=True)
+    vista = base[["Producto"]].copy()
+    labels = meses_objetivo(df)
+    mapa = mapa_periodos(df)
+
+    columnas_meses_cerrados = []
+    columnas_semanas_actuales = []
+
+    for label in labels:
+        slot = mapa.get(label)
+        if not slot:
+            continue
+
+        if label.startswith("S"):
+            col = f"Venta semanal {label}"
+            columnas_semanas_actuales.append(col)
+        else:
+            col = f"Venta total {label}"
+            columnas_meses_cerrados.append(col)
+
+        vista[col] = base[f"MES_{slot}_VENTA_MONTO"].round(0).astype(int)
+
+    if columnas_meses_cerrados:
+        vista["Prom. meses cerrados"] = (
+            vista[columnas_meses_cerrados].mean(axis=1).round(0).astype(int)
+        )
+    else:
+        vista["Prom. meses cerrados"] = 0
+
+    columnas_orden = (
+        ["Producto", "Prom. meses cerrados"]
+        + columnas_meses_cerrados
+        + columnas_semanas_actuales
+    )
+    vista = vista[columnas_orden]
+    return vista.sort_values("Prom. meses cerrados", ascending=False)
+
+
 def build_tabla_supermercado_montos(df: pd.DataFrame) -> pd.DataFrame:
     tabla = build_tabla_principal_montos(df)
     if tabla.empty:
@@ -947,6 +989,19 @@ if tabla_supermercado_montos.empty:
 else:
     st.dataframe(
         style_montos_supermercado(tabla_supermercado_montos),
+        width="stretch",
+        hide_index=True,
+    )
+
+tabla_venta_periodos_monto = build_tabla_venta_periodos_monto(df_filtrado)
+st.markdown("**Venta por períodos en monto**")
+if tabla_venta_periodos_monto.empty:
+    st.info("No hay datos suficientes para construir la tabla de venta por períodos.")
+else:
+    st.dataframe(
+        tabla_venta_periodos_monto.style.format({
+            col: fmt_money for col in tabla_venta_periodos_monto.columns if col != "Producto"
+        }),
         width="stretch",
         hide_index=True,
     )
