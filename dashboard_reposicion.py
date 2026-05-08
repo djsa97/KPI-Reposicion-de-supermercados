@@ -537,32 +537,7 @@ def style_montos_supermercado(df: pd.DataFrame):
     return df.style.format({col: fmt_money for col in columnas_monto})
 
 
-def construir_tendencia_productos(df: pd.DataFrame) -> pd.DataFrame:
-    rows = []
-    for label in meses_objetivo(df):
-        serie = valor_promedio_semanal(df, label)
-        tmp = pd.DataFrame({
-            "Producto": df["Producto"].values,
-            "Promedio": serie.values,
-        })
-        tmp = tmp.groupby("Producto", as_index=False)["Promedio"].sum()
-        tmp["Mes"] = label
-        rows.append(tmp)
-
-    if not rows:
-        return pd.DataFrame(columns=["Producto", "Promedio", "Mes"])
-
-    tendencia = pd.concat(rows, ignore_index=True)
-    ranking = (
-        tendencia.groupby("Producto", as_index=False)["Promedio"]
-        .mean()
-        .sort_values("Promedio", ascending=False)
-    )
-    top_productos = ranking.head(7)["Producto"].tolist()
-    return tendencia[tendencia["Producto"].isin(top_productos)].copy()
-
-
-def construir_tendencia_productos_monto(df: pd.DataFrame) -> pd.DataFrame:
+def construir_tendencia_venta_periodos_monto(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
     mapa = mapa_periodos(df)
 
@@ -572,14 +547,14 @@ def construir_tendencia_productos_monto(df: pd.DataFrame) -> pd.DataFrame:
             continue
         tmp = pd.DataFrame({
             "Producto": df["Producto"].values,
-            "Monto": df[f"MES_{slot}_NETO_MONTO"].values,
+            "Monto": df[f"MES_{slot}_VENTA_MONTO"].values,
         })
         tmp = tmp.groupby("Producto", as_index=False)["Monto"].sum()
-        tmp["Mes"] = label
+        tmp["Período"] = label
         rows.append(tmp)
 
     if not rows:
-        return pd.DataFrame(columns=["Producto", "Monto", "Mes"])
+        return pd.DataFrame(columns=["Producto", "Monto", "Período"])
 
     tendencia = pd.concat(rows, ignore_index=True)
     ranking = (
@@ -954,28 +929,28 @@ st.dataframe(
     hide_index=True,
 )
 
-st.subheader("Promedio semanal neto por producto")
-tendencia_productos_und = construir_tendencia_productos(df_filtrado)
-if tendencia_productos_und.empty:
-    st.info("No hay datos suficientes para construir la tendencia por producto.")
+st.subheader("Venta por períodos en monto")
+tendencia_venta_monto = construir_tendencia_venta_periodos_monto(df_filtrado)
+if tendencia_venta_monto.empty:
+    st.info("No hay datos suficientes para construir la tendencia de venta por producto.")
 else:
-    fig_tendencia_productos_und = px.line(
-        tendencia_productos_und,
-        x="Mes",
-        y="Promedio",
+    fig_tendencia_venta_monto = px.line(
+        tendencia_venta_monto,
+        x="Período",
+        y="Monto",
         color="Producto",
         markers=True,
         line_shape="linear",
     )
-    fig_tendencia_productos_und.update_layout(
+    fig_tendencia_venta_monto.update_layout(
         height=420,
         margin=dict(l=20, r=20, t=20, b=20),
-        yaxis_title="Prom. semanal neto",
+        yaxis_title="Monto vendido",
         xaxis_title="Período",
         legend_title="Producto",
     )
-    fig_tendencia_productos_und.update_yaxes(tickformat=",.0f")
-    st.plotly_chart(fig_tendencia_productos_und, use_container_width=True)
+    fig_tendencia_venta_monto.update_yaxes(tickformat=",.0f")
+    st.plotly_chart(fig_tendencia_venta_monto, use_container_width=True)
 
 st.caption(f"Promedio general de la tabla superior: {fmt_num(promedio_general)}")
 
@@ -1006,7 +981,7 @@ else:
         hide_index=True,
     )
 
-tendencia_productos = construir_tendencia_productos_monto(df_filtrado)
+tendencia_productos = construir_tendencia_venta_periodos_monto(df_filtrado)
 tendencia_supermercados = construir_tendencia_supermercados_monto(df_filtrado)
 mix_productos_supermercado = construir_mix_productos_supermercado_monto(df_filtrado)
 
@@ -1059,13 +1034,13 @@ ranking_sucursales_producto = construir_sucursales_producto_monto(df_filtrado, p
 g1, g2 = st.columns(2)
 
 with g1:
-    st.markdown("**Tendencia mensual por producto**")
+    st.markdown("**Tendencia de venta por producto**")
     if tendencia_productos.empty:
         st.info("No hay datos suficientes para graficar la tendencia por producto.")
     else:
         fig_tendencia = px.line(
             tendencia_productos,
-            x="Mes",
+            x="Período",
             y="Monto",
             color="Producto",
             markers=True,
@@ -1074,8 +1049,8 @@ with g1:
         fig_tendencia.update_layout(
             height=420,
             margin=dict(l=20, r=20, t=20, b=20),
-            yaxis_title="Monto neto",
-            xaxis_title="Mes",
+            yaxis_title="Monto vendido",
+            xaxis_title="Período",
             legend_title="Producto",
         )
         fig_tendencia.update_yaxes(tickformat=",.0f")
