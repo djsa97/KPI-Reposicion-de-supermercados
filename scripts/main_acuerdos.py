@@ -1,5 +1,6 @@
 import os
 import re
+from datetime import date
 from urllib.parse import urljoin
 
 import pdfplumber
@@ -15,10 +16,10 @@ ERP_URL = os.getenv("ERP_URL", "https://erpsol.valurq.com.py/#")
 USUARIO = os.getenv("ERP_USER", "")
 CLAVE = os.getenv("ERP_PASSWORD", "")
 
-PDF_PATH = "data/acuerdos_enero_marzo.pdf"
+PDF_PATH = "data/acuerdos_periodo_actual.pdf"
 
-FECHA_DESDE = "2026-01-01"
-FECHA_HASTA = "2026-03-31"
+FECHA_DESDE = os.getenv("ERP_FECHA_DESDE", "2026-01-01")
+FECHA_HASTA = os.getenv("ERP_FECHA_HASTA", date.today().isoformat())
 
 
 # =========================
