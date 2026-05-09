@@ -273,8 +273,64 @@ def find_new_excel_download(before: dict[Path, tuple[float, int]], started_at: f
     return None
 
 
-def click_a_planilla_y_descargar(page, output_path: Path) -> bool:
-    debug("Descargando con botón A PLANILLA...")
+def click_locator_descarga(locator, output_path: Path, page) -> bool:
+    before = snapshot_downloads()
+    started_at = time.time()
+    try:
+        with page.expect_download(timeout=90_000) as download_info:
+            locator.click(timeout=10_000)
+        download = download_info.value
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        download.save_as(str(output_path))
+        debug(f"Excel ERP guardado: {output_path}")
+        return True
+    except Exception as exc:
+        debug(f"No pude capturar descarga directa: {exc}")
+        try:
+            locator.click(timeout=10_000)
+        except Exception:
+            pass
+        downloaded = find_new_excel_download(before, started_at, timeout=90)
+        if downloaded:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(downloaded, output_path)
+            debug(f"Excel ERP copiado desde Descargas: {downloaded} -> {output_path}")
+            return True
+    return False
+
+
+def descargar_desde_enlace_generado(page, output_path: Path) -> bool:
+    debug("Esperando enlace generado de la planilla...")
+    link_selectors = [
+        'a:has-text("Presione en este enlace")',
+        'a:has-text("descargarla")',
+        'a:has-text("enlace")',
+        'text="Presione en este enlace para descargarla"',
+    ]
+    for _ in range(60):
+        for selector in link_selectors:
+            locator = page.locator(selector).first
+            try:
+                if locator.count() > 0 and locator.is_visible():
+                    debug(f"Enlace de descarga detectado: {selector}")
+                    if click_locator_descarga(locator, output_path, page):
+                        return True
+                    href = locator.get_attribute("href") or ""
+                    if href:
+                        response = page.context.request.get(urljoin(ERP_URL, href), timeout=60_000)
+                        if response.ok:
+                            output_path.parent.mkdir(parents=True, exist_ok=True)
+                            output_path.write_bytes(response.body())
+                            debug(f"Excel ERP descargado desde href del enlace: {output_path}")
+                            return True
+            except Exception:
+                continue
+        page.wait_for_timeout(1000)
+    return False
+
+
+def generar_y_descargar_planilla(page, output_path: Path) -> bool:
+    debug("Generando planilla con botón A PLANILLA...")
     selectors = [
         'button:has-text("A PLANILLA")',
         'a:has-text("A PLANILLA")',
@@ -291,28 +347,15 @@ def click_a_planilla_y_descargar(page, output_path: Path) -> bool:
         except Exception:
             continue
 
-        before = snapshot_downloads()
-        started_at = time.time()
         try:
-            with page.expect_download(timeout=90_000) as download_info:
-                locator.click(timeout=10_000)
-            download = download_info.value
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            download.save_as(str(output_path))
-            debug(f"Excel ERP guardado desde A PLANILLA: {output_path}")
-            return True
+            locator.click(timeout=10_000)
+            page.wait_for_timeout(1500)
         except Exception as exc:
-            debug(f"No pude capturar descarga directa con {selector}: {exc}")
-            try:
-                locator.click(timeout=10_000)
-            except Exception:
-                pass
-            downloaded = find_new_excel_download(before, started_at, timeout=90)
-            if downloaded:
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(downloaded, output_path)
-                debug(f"Excel ERP copiado desde Descargas: {downloaded} -> {output_path}")
-                return True
+            debug(f"No pude clickear A PLANILLA con {selector}: {exc}")
+            continue
+
+        if descargar_desde_enlace_generado(page, output_path):
+            return True
 
     return False
 
@@ -389,7 +432,7 @@ def descargar_erp_galpones(output_path: Path) -> None:
             fill_input_robusto(hasta, fecha_iso_a_ui(FECHA_HASTA), FECHA_HASTA)
             debug(f"Fechas ERP: {FECHA_DESDE} a {FECHA_HASTA}")
 
-            if not click_a_planilla_y_descargar(page, output_path):
+            if not generar_y_descargar_planilla(page, output_path):
                 lanzar_consulta(page)
 
             if not output_path.exists() and not buscar_descarga_excel(context, page, output_path):
