@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from datetime import date
 from pathlib import Path
 from urllib.parse import urljoin
@@ -238,6 +239,84 @@ def lanzar_consulta(page) -> None:
     page.wait_for_timeout(6000)
 
 
+def snapshot_downloads() -> dict[Path, tuple[float, int]]:
+    downloads = Path.home() / "Downloads"
+    if not downloads.exists():
+        return {}
+    snapshot: dict[Path, tuple[float, int]] = {}
+    for path in downloads.iterdir():
+        try:
+            snapshot[path] = (path.stat().st_mtime, path.stat().st_size)
+        except FileNotFoundError:
+            continue
+    return snapshot
+
+
+def find_new_excel_download(before: dict[Path, tuple[float, int]], started_at: float, timeout: int = 90) -> Path | None:
+    downloads = Path.home() / "Downloads"
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        for path in downloads.glob("*"):
+            if path.suffix.lower() not in {".xlsx", ".xls"}:
+                continue
+            if path.name.startswith("~$"):
+                continue
+            try:
+                stat = path.stat()
+            except FileNotFoundError:
+                continue
+            previous = before.get(path)
+            is_new = previous is None or previous != (stat.st_mtime, stat.st_size)
+            if is_new and stat.st_mtime >= started_at - 2 and stat.st_size > 0:
+                return path
+        time.sleep(1)
+    return None
+
+
+def click_a_planilla_y_descargar(page, output_path: Path) -> bool:
+    debug("Descargando con botón A PLANILLA...")
+    selectors = [
+        'button:has-text("A PLANILLA")',
+        'a:has-text("A PLANILLA")',
+        'text="A PLANILLA"',
+        'button:has-text("PLANILLA")',
+        'a:has-text("PLANILLA")',
+    ]
+
+    for selector in selectors:
+        locator = page.locator(selector).first
+        try:
+            if locator.count() == 0:
+                continue
+        except Exception:
+            continue
+
+        before = snapshot_downloads()
+        started_at = time.time()
+        try:
+            with page.expect_download(timeout=90_000) as download_info:
+                locator.click(timeout=10_000)
+            download = download_info.value
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            download.save_as(str(output_path))
+            debug(f"Excel ERP guardado desde A PLANILLA: {output_path}")
+            return True
+        except Exception as exc:
+            debug(f"No pude capturar descarga directa con {selector}: {exc}")
+            try:
+                locator.click(timeout=10_000)
+            except Exception:
+                pass
+            downloaded = find_new_excel_download(before, started_at, timeout=90)
+            if downloaded:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(downloaded, output_path)
+                debug(f"Excel ERP copiado desde Descargas: {downloaded} -> {output_path}")
+                return True
+
+    return False
+
+
 def buscar_descarga_excel(context, page, output_path: Path) -> bool:
     debug("Buscando botón o enlace de Excel...")
     selectors = [
@@ -309,9 +388,11 @@ def descargar_erp_galpones(output_path: Path) -> None:
             fill_input_robusto(desde, fecha_iso_a_ui(FECHA_DESDE), FECHA_DESDE)
             fill_input_robusto(hasta, fecha_iso_a_ui(FECHA_HASTA), FECHA_HASTA)
             debug(f"Fechas ERP: {FECHA_DESDE} a {FECHA_HASTA}")
-            lanzar_consulta(page)
 
-            if not buscar_descarga_excel(context, page, output_path):
+            if not click_a_planilla_y_descargar(page, output_path):
+                lanzar_consulta(page)
+
+            if not output_path.exists() and not buscar_descarga_excel(context, page, output_path):
                 raise RuntimeError("No encontre descarga Excel despues de generar el reporte.")
         finally:
             browser.close()
