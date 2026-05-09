@@ -331,7 +331,10 @@ def load_classification() -> pd.DataFrame:
     if not CLASSIFICATION_PATH.exists():
         return pd.DataFrame()
 
-    raw = pd.read_excel(CLASSIFICATION_PATH, sheet_name="Respuestas de formulario 1")
+    try:
+        raw = pd.read_excel(CLASSIFICATION_PATH, sheet_name="Respuestas de formulario 1")
+    except ValueError:
+        raw = pd.read_excel(CLASSIFICATION_PATH, sheet_name=0)
     raw.columns = [str(col).strip() for col in raw.columns]
     if raw.empty or "Número de galpón" not in raw.columns:
         return pd.DataFrame()
