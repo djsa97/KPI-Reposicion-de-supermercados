@@ -241,6 +241,9 @@ def load_data():
         if col in df.columns:
             df[col] = df[col].fillna("").astype(str).str.strip()
 
+    if "CLIENTE" in df.columns:
+        df["CLIENTE"] = df["CLIENTE"].map(normalizar_cliente_dashboard)
+
     for col in df.columns:
         if re.fullmatch(r"MES_\d+_LABEL", col):
             df[col] = df[col].fillna("").astype(str).str.strip()
@@ -271,6 +274,22 @@ def normalizar_texto_base(texto: str) -> str:
     texto = "".join(c for c in texto if not unicodedata.combining(c))
     texto = " ".join(texto.replace("_", " ").split())
     return texto
+
+
+def normalizar_cliente_dashboard(cliente: str) -> str:
+    cliente_limpio = str(cliente or "").strip()
+    texto_base = normalizar_texto_base(cliente_limpio)
+
+    if not texto_base:
+        return ""
+
+    if texto_base == "super seis":
+        return "Super Seis"
+
+    if texto_base.startswith("s6 "):
+        return "Super Seis"
+
+    return cliente_limpio
 
 
 def normalizar_sucursal_dashboard(cliente: str, sucursal: str) -> str:
