@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import gspread
 import plotly.express as px
+import calendar
 from google.oauth2.service_account import Credentials
 from gspread.utils import ValueRenderOption
 import os
@@ -20,6 +21,20 @@ WORKSHEET_NAME = "reposicion_base"
 CLIENTES_EXCLUIDOS = set()
 COL_PROM_UND = "Prom. períodos"
 COL_PROM_MONTO = "Prom. períodos monto"
+MESES_ES_REV = {
+    "ENE": 1,
+    "FEB": 2,
+    "MAR": 3,
+    "ABR": 4,
+    "MAY": 5,
+    "JUN": 6,
+    "JUL": 7,
+    "AGO": 8,
+    "SEP": 9,
+    "OCT": 10,
+    "NOV": 11,
+    "DIC": 12,
+}
 
 SUCURSALES_VALIDAS = {
     "ALIMENTOS ESPECIALES S.A.": ["ESPANA", "LAURELES", "MOLAS", "OTROS", "PERSERVERANCIA"],
@@ -540,8 +555,9 @@ def style_montos_supermercado(df: pd.DataFrame):
 def construir_tendencia_venta_periodos_monto(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
     mapa = mapa_periodos(df)
+    labels = meses_objetivo(df)
 
-    for label in meses_objetivo(df):
+    for label in labels:
         slot = mapa.get(label)
         if not slot:
             continue
@@ -551,19 +567,65 @@ def construir_tendencia_venta_periodos_monto(df: pd.DataFrame) -> pd.DataFrame:
         })
         tmp = tmp.groupby("Producto", as_index=False)["Monto"].sum()
         tmp["Período"] = label
+        tmp["Serie"] = "Real"
         rows.append(tmp)
 
     if not rows:
-        return pd.DataFrame(columns=["Producto", "Monto", "Período"])
+        return pd.DataFrame(columns=["Producto", "Monto", "Período", "Serie"])
 
     tendencia = pd.concat(rows, ignore_index=True)
     ranking = (
-        tendencia.groupby("Producto", as_index=False)["Monto"]
+        tendencia[tendencia["Serie"] == "Real"]
+        .groupby("Producto", as_index=False)["Monto"]
         .mean()
         .sort_values("Monto", ascending=False)
     )
     top_productos = ranking.head(7)["Producto"].tolist()
-    return tendencia[tendencia["Producto"].isin(top_productos)].copy()
+    tendencia = tendencia[tendencia["Producto"].isin(top_productos)].copy()
+
+    labels_semanales = [label for label in labels if label.startswith("S")]
+    if not labels_semanales:
+        return tendencia
+
+    semanas_por_mes = {}
+    patron = re.compile(r"^S(\d+)\s+([A-Z]{3})-(\d{4})$")
+    for label in labels_semanales:
+        match = patron.match(label)
+        if not match:
+            continue
+        semana_idx = int(match.group(1))
+        mes_txt = match.group(2)
+        anio = int(match.group(3))
+        mes_num = MESES_ES_REV.get(mes_txt)
+        if not mes_num:
+            continue
+        semanas_por_mes.setdefault((anio, mes_num, mes_txt), []).append((semana_idx, label))
+
+    proyecciones = []
+    for (anio, mes_num, _mes_txt), semanas in semanas_por_mes.items():
+        semanas_ordenadas = sorted(semanas, key=lambda x: x[0])
+        semanas_mes = calendar.monthrange(anio, mes_num)[1] / 7
+        for producto in top_productos:
+            acumulado = 0.0
+            for posicion, (_semana_idx, label) in enumerate(semanas_ordenadas, start=1):
+                actual = tendencia[
+                    (tendencia["Producto"] == producto)
+                    & (tendencia["Período"] == label)
+                    & (tendencia["Serie"] == "Real")
+                ]["Monto"].sum()
+                acumulado += float(actual)
+                proyectado = acumulado / posicion * semanas_mes if posicion else 0.0
+                proyecciones.append({
+                    "Producto": producto,
+                    "Monto": proyectado,
+                    "Período": label,
+                    "Serie": "Proyección mes actual",
+                })
+
+    if proyecciones:
+        tendencia = pd.concat([tendencia, pd.DataFrame(proyecciones)], ignore_index=True)
+
+    return tendencia
 
 
 def construir_ranking_sucursales(df: pd.DataFrame) -> pd.DataFrame:
@@ -939,6 +1001,7 @@ else:
         x="Período",
         y="Monto",
         color="Producto",
+        line_dash="Serie",
         markers=True,
         line_shape="linear",
     )
@@ -951,6 +1014,7 @@ else:
     )
     fig_tendencia_venta_monto.update_yaxes(tickformat=",.0f")
     st.plotly_chart(fig_tendencia_venta_monto, use_container_width=True)
+    st.caption("Línea continua: venta real del período. Línea punteada: proyección mensual del mes actual.")
 
 st.caption(f"Promedio general de la tabla superior: {fmt_num(promedio_general)}")
 
