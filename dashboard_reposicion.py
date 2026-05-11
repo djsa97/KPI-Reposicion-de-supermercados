@@ -602,9 +602,30 @@ def construir_tendencia_venta_periodos_monto(df: pd.DataFrame) -> pd.DataFrame:
     top_productos = ranking.head(7)["Producto"].tolist()
     tendencia = tendencia[tendencia["Producto"].isin(top_productos)].copy()
 
+    return agregar_proyeccion_mes_actual(
+        tendencia,
+        entidad_col="Producto",
+        periodo_col="Período",
+        labels=labels,
+    )
+
+
+def agregar_proyeccion_mes_actual(
+    tendencia: pd.DataFrame,
+    entidad_col: str,
+    periodo_col: str,
+    labels: list[str],
+) -> pd.DataFrame:
+    if tendencia.empty:
+        return tendencia
+
+    base = tendencia.copy()
+    if "Serie" not in base.columns:
+        base["Serie"] = "Real"
+
     labels_semanales = [label for label in labels if label.startswith("S")]
     if not labels_semanales:
-        return tendencia
+        return base
 
     semanas_por_mes = {}
     patron = re.compile(r"^S(\d+)\s+([A-Z]{3})-(\d{4})$")
@@ -624,27 +645,34 @@ def construir_tendencia_venta_periodos_monto(df: pd.DataFrame) -> pd.DataFrame:
     for (anio, mes_num, _mes_txt), semanas in semanas_por_mes.items():
         semanas_ordenadas = sorted(semanas, key=lambda x: x[0])
         semanas_mes = calendar.monthrange(anio, mes_num)[1] / 7
-        for producto in top_productos:
+        entidades = (
+            base[base["Serie"] == "Real"][entidad_col]
+            .dropna()
+            .astype(str)
+            .unique()
+            .tolist()
+        )
+        for entidad in entidades:
             acumulado = 0.0
             for posicion, (_semana_idx, label) in enumerate(semanas_ordenadas, start=1):
-                actual = tendencia[
-                    (tendencia["Producto"] == producto)
-                    & (tendencia["Período"] == label)
-                    & (tendencia["Serie"] == "Real")
+                actual = base[
+                    (base[entidad_col] == entidad)
+                    & (base[periodo_col] == label)
+                    & (base["Serie"] == "Real")
                 ]["Monto"].sum()
                 acumulado += float(actual)
                 proyectado = acumulado / posicion * semanas_mes if posicion else 0.0
                 proyecciones.append({
-                    "Producto": producto,
+                    entidad_col: entidad,
                     "Monto": proyectado,
-                    "Período": label,
+                    periodo_col: label,
                     "Serie": "Proyección mes actual",
                 })
 
     if proyecciones:
-        tendencia = pd.concat([tendencia, pd.DataFrame(proyecciones)], ignore_index=True)
+        base = pd.concat([base, pd.DataFrame(proyecciones)], ignore_index=True)
 
-    return tendencia
+    return base
 
 
 def construir_ranking_sucursales(df: pd.DataFrame) -> pd.DataFrame:
@@ -731,11 +759,11 @@ def construir_evolucion_supermercados_producto(df: pd.DataFrame, producto: str) 
 def construir_evolucion_supermercados_producto_monto(df: pd.DataFrame, producto: str) -> pd.DataFrame:
     tabla = build_tabla_principal_montos(df)
     if tabla.empty:
-        return pd.DataFrame(columns=["CLIENTE", "Mes", "Monto"])
+        return pd.DataFrame(columns=["CLIENTE", "Mes", "Monto", "Serie"])
 
     base = tabla[tabla["Producto"] == producto].copy()
     if base.empty:
-        return pd.DataFrame(columns=["CLIENTE", "Mes", "Monto"])
+        return pd.DataFrame(columns=["CLIENTE", "Mes", "Monto", "Serie"])
 
     top_clientes = (
         base.groupby("CLIENTE", as_index=False)[COL_PROM_MONTO]
@@ -746,7 +774,8 @@ def construir_evolucion_supermercados_producto_monto(df: pd.DataFrame, producto:
     )
 
     rows = []
-    for label in meses_objetivo(df):
+    labels = meses_objetivo(df)
+    for label in labels:
         col = f"Monto neto {label}"
         tmp = (
             base[base["CLIENTE"].isin(top_clientes)]
@@ -755,9 +784,18 @@ def construir_evolucion_supermercados_producto_monto(df: pd.DataFrame, producto:
             .rename(columns={col: "Monto"})
         )
         tmp["Mes"] = label
+        tmp["Serie"] = "Real"
         rows.append(tmp)
 
-    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=["CLIENTE", "Mes", "Monto"])
+    if not rows:
+        return pd.DataFrame(columns=["CLIENTE", "Mes", "Monto", "Serie"])
+
+    return agregar_proyeccion_mes_actual(
+        pd.concat(rows, ignore_index=True),
+        entidad_col="CLIENTE",
+        periodo_col="Mes",
+        labels=labels,
+    )
 
 
 def construir_mix_productos_supermercado(df: pd.DataFrame) -> pd.DataFrame:
@@ -867,7 +905,7 @@ def construir_sucursales_producto_monto(df: pd.DataFrame, producto: str, metrica
 def construir_tendencia_supermercados_monto(df: pd.DataFrame) -> pd.DataFrame:
     tabla = build_tabla_principal_montos(df)
     if tabla.empty:
-        return pd.DataFrame(columns=["CLIENTE", "Mes", "Monto"])
+        return pd.DataFrame(columns=["CLIENTE", "Mes", "Monto", "Serie"])
 
     top_clientes = (
         tabla.groupby("CLIENTE", as_index=False)["Total meses actuales monto"]
@@ -878,7 +916,8 @@ def construir_tendencia_supermercados_monto(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     rows = []
-    for label in meses_objetivo(df):
+    labels = meses_objetivo(df)
+    for label in labels:
         col = f"Monto neto {label}"
         tmp = (
             tabla[tabla["CLIENTE"].isin(top_clientes)]
@@ -887,9 +926,18 @@ def construir_tendencia_supermercados_monto(df: pd.DataFrame) -> pd.DataFrame:
             .rename(columns={col: "Monto"})
         )
         tmp["Mes"] = label
+        tmp["Serie"] = "Real"
         rows.append(tmp)
 
-    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=["CLIENTE", "Mes", "Monto"])
+    if not rows:
+        return pd.DataFrame(columns=["CLIENTE", "Mes", "Monto", "Serie"])
+
+    return agregar_proyeccion_mes_actual(
+        pd.concat(rows, ignore_index=True),
+        entidad_col="CLIENTE",
+        periodo_col="Mes",
+        labels=labels,
+    )
 
 
 st.set_page_config(
@@ -1077,6 +1125,7 @@ else:
         x="Mes",
         y="Monto",
         color="CLIENTE",
+        line_dash="Serie",
         markers=True,
         line_shape="linear",
     )
@@ -1126,6 +1175,7 @@ with g1:
             x="Período",
             y="Monto",
             color="Producto",
+            line_dash="Serie",
             markers=True,
             line_shape="linear",
         )
@@ -1175,6 +1225,7 @@ with g3:
             x="Mes",
             y="Monto",
             color="CLIENTE",
+            line_dash="Serie",
             markers=True,
         )
         fig_evolucion.update_layout(
