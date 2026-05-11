@@ -1058,31 +1058,6 @@ st.dataframe(
     hide_index=True,
 )
 
-st.subheader("Venta por períodos en monto")
-tendencia_venta_monto = construir_tendencia_venta_periodos_monto(df_filtrado)
-if tendencia_venta_monto.empty:
-    st.info("No hay datos suficientes para construir la tendencia de venta por producto.")
-else:
-    fig_tendencia_venta_monto = px.line(
-        tendencia_venta_monto,
-        x="Período",
-        y="Monto",
-        color="Producto",
-        line_dash="Serie",
-        markers=True,
-        line_shape="linear",
-    )
-    fig_tendencia_venta_monto.update_layout(
-        height=420,
-        margin=dict(l=20, r=20, t=20, b=20),
-        yaxis_title="Monto vendido",
-        xaxis_title="Período",
-        legend_title="Producto",
-    )
-    fig_tendencia_venta_monto.update_yaxes(tickformat=",.0f")
-    st.plotly_chart(fig_tendencia_venta_monto, use_container_width=True)
-    st.caption("Línea continua: venta real del período. Línea punteada: proyección mensual del mes actual.")
-
 st.caption(f"Promedio general de la tabla superior: {fmt_num(promedio_general)}")
 
 st.subheader("Visualizaciones de seguimiento")
@@ -1095,19 +1070,6 @@ if tabla_supermercado_montos.empty:
 else:
     st.dataframe(
         style_montos_supermercado(tabla_supermercado_montos),
-        width="stretch",
-        hide_index=True,
-    )
-
-tabla_venta_periodos_monto = build_tabla_venta_periodos_monto(df_filtrado)
-st.markdown("**Venta por períodos en monto**")
-if tabla_venta_periodos_monto.empty:
-    st.info("No hay datos suficientes para construir la tabla de venta por períodos.")
-else:
-    st.dataframe(
-        tabla_venta_periodos_monto.style.format({
-            col: fmt_money for col in tabla_venta_periodos_monto.columns if col != "Producto"
-        }),
         width="stretch",
         hide_index=True,
     )
@@ -1138,6 +1100,44 @@ else:
     )
     fig_tendencia_super.update_yaxes(tickformat=",.0f")
     st.plotly_chart(fig_tendencia_super, use_container_width=True)
+
+st.markdown("**Venta por períodos en monto**")
+tendencia_venta_monto = construir_tendencia_venta_periodos_monto(df_filtrado)
+if tendencia_venta_monto.empty:
+    st.info("No hay datos suficientes para construir la tendencia de venta por producto.")
+else:
+    fig_tendencia_venta_monto = px.line(
+        tendencia_venta_monto,
+        x="Período",
+        y="Monto",
+        color="Producto",
+        line_dash="Serie",
+        markers=True,
+        line_shape="linear",
+    )
+    fig_tendencia_venta_monto.update_layout(
+        height=420,
+        margin=dict(l=20, r=20, t=20, b=20),
+        yaxis_title="Monto vendido",
+        xaxis_title="Período",
+        legend_title="Producto",
+    )
+    fig_tendencia_venta_monto.update_yaxes(tickformat=",.0f")
+    st.plotly_chart(fig_tendencia_venta_monto, use_container_width=True)
+    st.caption("Línea continua: venta real del período. Línea punteada: proyección mensual del mes actual.")
+
+tabla_venta_periodos_monto = build_tabla_venta_periodos_monto(df_filtrado)
+st.markdown("**Venta por períodos en monto**")
+if tabla_venta_periodos_monto.empty:
+    st.info("No hay datos suficientes para construir la tabla de venta por períodos.")
+else:
+    st.dataframe(
+        tabla_venta_periodos_monto.style.format({
+            col: fmt_money for col in tabla_venta_periodos_monto.columns if col != "Producto"
+        }),
+        width="stretch",
+        hide_index=True,
+    )
 
 v1, v2 = st.columns([2, 2])
 with v1:
